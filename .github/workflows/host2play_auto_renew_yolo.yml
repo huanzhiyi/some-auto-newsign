@@ -1,0 +1,193 @@
+name: Host2Play Auto Renew (YOLO)
+
+on:
+  schedule:
+    # 每天运行一次，北京时间 10:00 (UTC 02:00)
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+          
+          echo "删除不必要的文件..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          
+          echo "清理后磁盘空间:"
+          df -h
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install system dependencies (minimal)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget
+      
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium
+      
+      - name: Cache YOLO model
+        uses: actions/cache@v3
+        id: yolo-model-cache
+        with:
+          path: model.onnx
+          key: yolo-model-onnx-v1
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Playwright + Camoufox（可过 Cloudflare）
+          pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
+          # YOLO 推理依赖（固定 onnxruntime 版本避免兼容性问题）
+          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
+          python -c "import camoufox; import browserforge; import ultralytics; import onnxruntime; print('deps ok')"
+      
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Install Playwright dependencies only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          playwright install-deps chromium
+      
+      - name: Download YOLO model
+        if: steps.yolo-model-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "🔍 缓存未命中，需要下载 model.onnx..."
+          
+          # 删除可能存在的 LFS 指针文件
+          rm -f model.onnx
+          
+          echo "📥 从 DannyLuna17 的 fork 仓库下载 YOLO 模型..."
+          
+          # 尝试从 GitHub LFS media 下载
+          echo "🔄 尝试方法 1: GitHub LFS media 链接..."
+          curl -L -o model.onnx "https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx" && {
+            FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
+            if [ $FILE_SIZE -gt 1000000 ]; then
+              echo "✅ 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+              exit 0
+            fi
+          }
+          
+          echo "⚠️ 方法 1 失败，尝试方法 2: 直接 GitHub raw..."
+          rm -f model.onnx
+          curl -L -o model.onnx "https://github.com/DannyLuna17/RecaptchaV2-IA-Solver/raw/main/model.onnx" && {
+            FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
+            if [ $FILE_SIZE -gt 1000000 ]; then
+              echo "✅ 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+              exit 0
+            fi
+          }
+          
+          echo "❌ 所有下载方法均失败，但脚本内置了自动下载功能"
+      
+      - name: Verify YOLO model
+        run: |
+          echo "🔍 验证 model.onnx 文件..."
+          
+          if [ -f model.onnx ]; then
+            FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
+            echo "📦 文件大小: $FILE_SIZE bytes ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
+            
+            if [ $FILE_SIZE -lt 1000000 ]; then
+              echo "⚠️ 警告: 文件大小异常，但脚本会尝试重新下载"
+            else
+              echo "✅ 模型文件验证通过"
+            fi
+          else
+            echo "ℹ️ 模型文件不存在，脚本将自动下载"
+          fi
+      
+      - name: Run auto renew script
+        env:
+          RENEW_URL: ${{ secrets.RENEW_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CI: 'true'
+          KEEP_CAPTCHA_IMAGES: 'true'
+        run: |
+          python host2play_auto_renew_yolo.py
+      
+      - name: Upload success screenshot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-success-${{ github.run_number }}
+          path: host2play_renew_success.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-debug-${{ github.run_number }}
+          path: |
+            0.png
+            host2play_*.png
+          retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: Upload error screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-error-${{ github.run_number }}
+          path: |
+            host2play_error*.png
+            host2play_*.png
+            0.png
+            1.png
+            2.png
+            3.png
+            4.png
+            5.png
+            6.png
+            7.png
+            8.png
+            9.png
+            10.png
+            11.png
+            12.png
+            13.png
+            14.png
+            15.png
+            16.png
+          retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
