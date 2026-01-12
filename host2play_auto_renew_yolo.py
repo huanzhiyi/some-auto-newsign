@@ -606,31 +606,16 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                             cell = challenge_frame.locator(f'#rc-imageselect-target td').nth(answer - 1)
                             # 确保元素可见后再点击
                             await cell.wait_for(state='visible', timeout=3000)
-                            
-                            # 先尝试使用 JavaScript 点击（绕过视口限制）
-                            try:
-                                await page.evaluate(f"""
-                                    (function() {{
-                                        var iframe = document.querySelector('iframe[title*="challenge"]');
-                                        if (iframe && iframe.contentDocument) {{
-                                            var cell = iframe.contentDocument.querySelector('#rc-imageselect-target td:nth-child({answer})');
-                                            if (cell) {{
-                                                cell.click();
-                                                return true;
-                                            }}
-                                        }}
-                                        return false;
-                                    }})()
-                                """)
-                                if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)}) [JS]")
-                            except:
-                                # 如果 JS 失败，尝试 Playwright 的 force click
-                                await cell.click(force=True, timeout=3000)
-                                if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)}) [Force]")
+                            # 滚动到元素位置（确保在视口内）
+                            await cell.scroll_into_view_if_needed()
+                            await asyncio.sleep(0.1)
+                            # 使用 force=True 强制点击
+                            await cell.click(force=True)
+                            if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)})")
                         except Exception as click_error:
                             if verbose: print(f"      ✗ 点击格子 {answer} 失败: {click_error}")
                         # 快速点击，避免过期（动态验证需要速度）
-                        await human_like_delay(0.2, 0.4)
+                        await human_like_delay(0.3, 0.6)
                     
                     dynamic_rounds = 0
                     max_dynamic_rounds = 6  # 减少动态验证轮次，避免超时
@@ -645,22 +630,13 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                         
                         while new_img_wait_count < max_new_img_wait:
                             new_img_wait_count += 1
-                            await asyncio.sleep(0.15)
+                            await asyncio.sleep(0.2)
                             is_new, img_urls = await get_all_new_dynamic_captcha_img_urls(answers, before_img_urls, page)
                             if is_new:
                                 break
                         
                         if new_img_wait_count >= max_new_img_wait:
-                            if verbose: print("    等待新图片超时，可能已完成验证")
-                            # 检查 verify 按钮是否可用
-                            try:
-                                verify_button = challenge_frame.locator('#recaptcha-verify-button').first
-                                is_disabled = await verify_button.get_attribute('disabled')
-                                if is_disabled is None:
-                                    if verbose: print("    Verify 按钮已启用，继续验证流程")
-                                    break
-                            except:
-                                pass
+                            if verbose: print("    等待新图片超时，跳出动态验证")
                             break
                         
                         new_img_index_urls = [answer-1 for answer in answers]
@@ -687,30 +663,14 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                                 try:
                                     cell = challenge_frame.locator(f'#rc-imageselect-target td').nth(answer - 1)
                                     await cell.wait_for(state='visible', timeout=3000)
-                                    
-                                    # 使用 JavaScript 点击（绕过视口限制）
-                                    try:
-                                        await page.evaluate(f"""
-                                            (function() {{
-                                                var iframe = document.querySelector('iframe[title*="challenge"]');
-                                                if (iframe && iframe.contentDocument) {{
-                                                    var cell = iframe.contentDocument.querySelector('#rc-imageselect-target td:nth-child({answer})');
-                                                    if (cell) {{
-                                                        cell.click();
-                                                        return true;
-                                                    }}
-                                                }}
-                                                return false;
-                                            }})()
-                                        """)
-                                        if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)}) [JS]")
-                                    except:
-                                        await cell.click(force=True, timeout=3000)
-                                        if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)}) [Force]")
+                                    await cell.scroll_into_view_if_needed()
+                                    await asyncio.sleep(0.1)
+                                    await cell.click(force=True)
+                                    if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)})")
                                 except Exception as click_error:
                                     if verbose: print(f"      ✗ 点击格子 {answer} 失败: {click_error}")
                                 # 快速点击，避免过期
-                                await human_like_delay(0.2, 0.4)
+                                await human_like_delay(0.3, 0.6)
                         else:
                             if verbose: print("    未识别到更多目标，结束动态验证")
                             break
@@ -722,27 +682,10 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                         try:
                             cell = challenge_frame.locator(f'#rc-imageselect-target td').nth(answer - 1)
                             await cell.wait_for(state='visible', timeout=3000)
-                            
-                            # 使用 JavaScript 点击（绕过视口限制）
-                            try:
-                                await page.evaluate(f"""
-                                    (function() {{
-                                        var iframe = document.querySelector('iframe[title*="challenge"]');
-                                        if (iframe && iframe.contentDocument) {{
-                                            var cell = iframe.contentDocument.querySelector('#rc-imageselect-target td:nth-child({answer})');
-                                            if (cell) {{
-                                                cell.click();
-                                                return true;
-                                            }}
-                                        }}
-                                        return false;
-                                    }})()
-                                """)
-                                if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)}) [JS]")
-                            except:
-                                # 如果 JS 失败，尝试 Playwright 的 force click
-                                await cell.click(force=True, timeout=3000)
-                                if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)}) [Force]")
+                            await cell.scroll_into_view_if_needed()
+                            await asyncio.sleep(0.1)
+                            await cell.click(force=True)
+                            if verbose: print(f"      ✓ 已点击格子 {answer} ({idx+1}/{len(answers)})")
                         except Exception as click_error:
                             if verbose: print(f"      ✗ 点击格子 {answer} 失败: {click_error}")
                         # 适中延迟（一次性选择不会过期）
@@ -751,49 +694,8 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                 # 点击验证按钮
                 await human_like_delay(0.5, 1.0)  # 减少等待
                 verify_button = challenge_frame.locator('#recaptcha-verify-button').first
-                
-                # 等待 verify 按钮启用
-                verify_wait_count = 0
-                max_verify_wait = 50
-                while verify_wait_count < max_verify_wait:
-                    verify_wait_count += 1
-                    try:
-                        is_disabled = await verify_button.get_attribute('disabled')
-                        if is_disabled is None:
-                            if verbose: print("  ✓ Verify 按钮已启用")
-                            break
-                    except:
-                        pass
-                    await asyncio.sleep(0.1)
-                
-                if verify_wait_count >= max_verify_wait:
-                    if verbose: print("  ⚠ Verify 按钮超时未启用，尝试点击")
-                
                 await human_like_delay(0.3, 0.6)  # 减少等待
-                try:
-                    await verify_button.click(timeout=5000)
-                    if verbose: print("  ✓ 已点击 Verify 按钮")
-                except Exception as e:
-                    if verbose: print(f"  ⚠ 点击 Verify 失败，尝试 JS 点击: {e}")
-                    # 使用 JS 强制点击
-                    try:
-                        await page.evaluate("""
-                            (function() {
-                                var iframe = document.querySelector('iframe[title*="challenge"]');
-                                if (iframe && iframe.contentDocument) {
-                                    var btn = iframe.contentDocument.querySelector('#recaptcha-verify-button');
-                                    if (btn) {
-                                        btn.click();
-                                        return true;
-                                    }
-                                }
-                                return false;
-                            })()
-                        """)
-                        if verbose: print("  ✓ 已点击 Verify 按钮 [JS]")
-                    except Exception as js_error:
-                        if verbose: print(f"  ✗ JS 点击也失败: {js_error}")
-                        raise
+                await verify_button.click()
                 
                 # 等待验证结果
                 await human_like_delay(2.0, 3.0)  # 减少等待
