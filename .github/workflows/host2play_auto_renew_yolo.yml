@@ -130,7 +130,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CI: 'true'
-          KEEP_CAPTCHA_IMAGES: 'true'
+          KEEP_CAPTCHA_IMAGES: 'false'
         run: |
           python host2play_auto_renew_yolo.py
       
@@ -140,45 +140,6 @@ jobs:
         with:
           name: renew-success-${{ github.run_number }}
           path: host2play_renew_success.png
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Upload debug artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: renew-debug-${{ github.run_number }}
-          path: |
-            0.png
-            host2play_*.png
-          retention-days: 7
-          if-no-files-found: ignore
-      
-      - name: Upload error screenshot
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: renew-error-${{ github.run_number }}
-          path: |
-            host2play_error*.png
-            host2play_*.png
-            0.png
-            1.png
-            2.png
-            3.png
-            4.png
-            5.png
-            6.png
-            7.png
-            8.png
-            9.png
-            10.png
-            11.png
-            12.png
-            13.png
-            14.png
-            15.png
-            16.png
           retention-days: 7
           if-no-files-found: ignore
       
