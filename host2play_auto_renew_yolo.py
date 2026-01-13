@@ -50,6 +50,12 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 VERBOSE = True
 
+# Camoufox 缓存配置
+# 设置 Camoufox 数据目录，避免每次重复下载浏览器文件
+# 使用工作区内的相对路径，适合 GitHub Actions 缓存
+CAMOUFOX_DATA_DIR = os.path.join(os.getcwd(), ".camoufox_cache")
+os.makedirs(CAMOUFOX_DATA_DIR, exist_ok=True)
+
 
 def send_telegram_message(message: str, photo_path: str = None) -> bool:
     """发送Telegram消息"""
@@ -793,6 +799,10 @@ async def renew_host2play_server():
     
     # 启动 Camoufox 浏览器
     print("\n启动 Camoufox 浏览器...")
+    print(f"📁 使用缓存目录: {CAMOUFOX_DATA_DIR}")
+    
+    # 设置环境变量，让 Camoufox 使用指定的缓存目录
+    os.environ['CAMOUFOX_BASE_DIR'] = CAMOUFOX_DATA_DIR
     
     async with AsyncCamoufox(
         headless=is_ci,  # CI 环境使用 headless，本地显示窗口
