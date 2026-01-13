@@ -695,7 +695,24 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                 await human_like_delay(0.5, 1.0)  # 减少等待
                 verify_button = challenge_frame.locator('#recaptcha-verify-button').first
                 await human_like_delay(0.3, 0.6)  # 减少等待
-                await verify_button.click()
+                
+                # 确保按钮在视口内
+                try:
+                    await verify_button.scroll_into_view_if_needed(timeout=5000)
+                    await asyncio.sleep(0.3)  # 等待滚动完成
+                except Exception as scroll_error:
+                    if verbose: print(f"    滚动按钮失败（尝试继续）: {scroll_error}")
+                
+                # 尝试点击，如果失败则使用 force 点击
+                try:
+                    await verify_button.click(timeout=10000)
+                except Exception as click_error:
+                    if verbose: print(f"    常规点击失败，尝试强制点击: {click_error}")
+                    try:
+                        await verify_button.click(force=True, timeout=10000)
+                    except Exception as force_error:
+                        if verbose: print(f"    强制点击也失败: {force_error}")
+                        raise
                 
                 # 等待验证结果
                 await human_like_delay(2.0, 3.0)  # 减少等待
