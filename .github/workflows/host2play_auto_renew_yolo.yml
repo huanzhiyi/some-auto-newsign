@@ -55,6 +55,13 @@ jobs:
           path: model.onnx
           key: yolo-model-onnx-v1
       
+      - name: Cache Camoufox browser
+        uses: actions/cache@v3
+        id: camoufox-cache
+        with:
+          path: .camoufox_cache
+          key: camoufox-${{ runner.os }}-v1
+      
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
