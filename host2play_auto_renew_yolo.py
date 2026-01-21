@@ -40,7 +40,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 配置
-MODEL_PATH = "model.onnx"
+MODEL_PATH = "tmp_rovodev_recaptcha_ia/model.onnx"
 MODEL_DOWNLOAD_URLS = [
     "https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx",
     "https://github.com/DannyLuna17/RecaptchaV2-IA-Solver/raw/main/model.onnx",
@@ -100,6 +100,11 @@ def send_telegram_message(message: str, photo_path: str = None) -> bool:
 
 def download_yolo_model():
     """下载 YOLO 模型文件（如果不存在）"""
+    # 确保模型目录存在
+    model_dir = os.path.dirname(MODEL_PATH)
+    if model_dir:
+        os.makedirs(model_dir, exist_ok=True)
+    
     if os.path.exists(MODEL_PATH):
         file_size = os.path.getsize(MODEL_PATH)
         if file_size > 1000000:
@@ -209,11 +214,20 @@ async def get_target_num(page: Page) -> int:
         "traffic": 9
     }
     
+    # 难以识别的目标类型，将跳过重新加载
+    SKIP_TARGETS = ["stairs", "chimney", "palm tree", "crosswalk", "taxis"]
+    
     try:
         # 在挑战 iframe 中查找目标文本
         challenge_frame = page.frame_locator('iframe[title*="challenge"]').first
         target_element = challenge_frame.locator('#rc-imageselect strong').first
         target_text = await target_element.text_content(timeout=10000)
+        
+        # 检查是否为难识别的目标类型
+        for skip_target in SKIP_TARGETS:
+            if skip_target in target_text.lower():
+                print(f"  ⚠️ 检测到困难目标类型: {target_text}，将重新加载")
+                return 2000  # 特殊返回值表示需要跳过
         
         for term, value in target_mappings.items():
             if term in target_text.lower():
@@ -234,8 +248,15 @@ def dynamic_and_selection_solver(target_num, verbose, model):
         
         image = Image.open("0.png")
         image = np.asarray(image)
-        # 使用默认参数，像参考项目一样
-        result = model.predict(image, task="detect", verbose=False)
+        # 优化YOLO预测参数：降低置信度阈值提高召回率
+        result = model.predict(
+            image, 
+            task="detect", 
+            verbose=False,
+            conf=0.20,      # 降低置信度阈值（原默认0.25）
+            iou=0.45,       # IoU阈值
+            imgsz=640,      # 确保图像大小
+        )
         
         # 获取目标索引
         target_index = []
@@ -291,8 +312,15 @@ def square_solver(target_num, verbose, model):
         
         image = Image.open("0.png")
         image = np.asarray(image)
-        # 使用默认参数，像参考项目一样
-        result = model.predict(image, task="detect", verbose=False)
+        # 优化YOLO预测参数：降低置信度阈值提高召回率
+        result = model.predict(
+            image, 
+            task="detect", 
+            verbose=False,
+            conf=0.20,      # 降低置信度阈值（原默认0.25）
+            iou=0.45,       # IoU阈值
+            imgsz=640,      # 确保图像大小
+        )
         boxes = result[0].boxes.data
         
         # 获取目标索引
@@ -518,6 +546,11 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                         await asyncio.sleep(0.3)  # 减少等待时间
                         await reload_button.click()
                         await asyncio.sleep(1)
+                    elif target_num == 2000:
+                        if verbose: print("  跳过困难识别的类型...")
+                        await asyncio.sleep(0.3)
+                        await reload_button.click()
+                        await asyncio.sleep(1)
                     else:
                         title_text = await title_wrapper.text_content()
                         
@@ -560,6 +593,40 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                                 captcha = "dynamic"
                                 break
                             else:
+                                # 如果没识别到，尝试降低置信度再试一次
+                                if verbose: print("    未检测到目标，尝试降低置信度...")
+                                try:
+                                    image = Image.open("0.png")
+                                    image = np.asarray(image)
+                                    result = model.predict(image, task="detect", verbose=False, conf=0.15)
+                                    target_index = []
+                                    count = 0
+                                    for num in result[0].boxes.cls:
+                                        if num == target_num:
+                                            target_index.append(count)
+                                        count += 1
+                                    
+                                    if len(target_index) > 0:
+                                        if verbose: print(f"    低置信度下检测到 {len(target_index)} 个目标")
+                                        answers = []
+                                        boxes = result[0].boxes.data
+                                        for i in target_index:
+                                            target_box = boxes[i]
+                                            x1, y1 = int(target_box[0]), int(target_box[1])
+                                            x2, y2 = int(target_box[2]), int(target_box[3])
+                                            xc = (x1 + x2) / 2
+                                            yc = (y1 + y2) / 2
+                                            row = yc // 100
+                                            col = xc // 100
+                                            answer = int(row * 3 + col + 1)
+                                            answers.append(answer)
+                                        answers = list(set(answers))
+                                        if len(answers) >= 1:
+                                            captcha = "dynamic"
+                                            break
+                                except Exception as e:
+                                    if verbose: print(f"    低置信度检测失败: {e}")
+                                
                                 if verbose: print("    未检测到足够的目标，重新加载...")
                                 await reload_button.click()
                                 await asyncio.sleep(1)
@@ -624,7 +691,7 @@ async def solve_recaptcha_yolo(page: Page, verbose=True, max_attempts=8) -> bool
                         await human_like_delay(0.3, 0.6)
                     
                     dynamic_rounds = 0
-                    max_dynamic_rounds = 6  # 减少动态验证轮次，避免超时
+                    max_dynamic_rounds = 10  # 增加动态验证轮次，提高成功率
                     
                     while dynamic_rounds < max_dynamic_rounds:
                         dynamic_rounds += 1
