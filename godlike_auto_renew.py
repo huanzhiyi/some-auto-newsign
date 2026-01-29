@@ -14,7 +14,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- 配置项 ---
-SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
+# 从环境变量读取服务器 URL，如果未设置则使用默认值
+SERVER_URL = os.environ.get('SERVER_URL')
 LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 # 单次任务执行的超时时间（秒），依然保留以防单次运行卡死
