@@ -1,0 +1,124 @@
+name: Add Godlike Server Time
+
+on:
+  # 允许在 Actions 页面手动触发此工作流，方便测试
+  workflow_dispatch:
+
+  schedule:
+    # 【【【 核心修改点在这里 】】】
+    # 使用两个 cron 表达式来组合实现"每90分钟"运行一次。
+    # 所有时间均为 UTC 时间。
+    # 第一个表达式：在 0, 3, 6, 9, 12, 15, 18, 21 点的第0分钟运行。
+    - cron: '0 0,3,6,9,12,15,18,21 * * *'
+    # 第二个表达式：在 1, 4, 7, 10, 13, 16, 19, 22 点的第30分钟运行。
+    - cron: '30 1,4,7,10,13,16,19,22 * * *'
+
+jobs:
+  add_time_job:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+    # 由于脚本现在是单次运行，不再需要长时间的 timeout
+    # 设置一个合理的超时，例如10分钟，防止意外卡死
+    timeout-minutes: 10
+
+    steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+          
+          echo "删除不必要的文件..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          
+          echo "清理后磁盘空间:"
+          df -h
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --default-timeout=300 --retries 3 playwright --no-cache-dir
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Install Playwright dependencies only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          playwright install-deps chromium
+
+      - name: Run Time Adder Script
+        env:
+          PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
+          PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
+          PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
+        # 使用 -u 参数禁用输出缓冲，确保日志实时显示
+        run: python -u godlike_auto_renew.py
+
+      - name: Upload error artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshots-${{ github.run_number }}
+          path: "*.png"
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Commit time.txt to repo
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 如果 time.txt 不存在，说明是第一次运行
+          if [ ! -f time.txt ]; then
+            echo "首次生成时间：$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
+          else
+            echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
+          fi
+
+          git add time.txt
+
+          # 如果有更改再提交
+          if git diff --cached --quiet; then
+            echo "无变化，无需提交"
+          else
+            git commit -m "✅ 更新时间文件: $(date +'%Y-%m-%d %H:%M:%S')"
+            git push origin HEAD:main
+          fi
+
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
