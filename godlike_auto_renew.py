@@ -2,6 +2,7 @@ import os
 import time
 import signal
 import logging
+import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from datetime import datetime
 
@@ -21,6 +22,10 @@ COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 # 单次任务执行的超时时间（秒），依然保留以防单次运行卡死
 TASK_TIMEOUT_SECONDS = 300  # 5分钟
 
+# Telegram 配置
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+
 # --- 超时处理机制 ---
 class TaskTimeoutError(Exception):
     """自定义任务超时异常"""
@@ -32,6 +37,47 @@ def timeout_handler(signum, frame):
 
 if os.name != 'nt':
     signal.signal(signal.SIGALRM, timeout_handler)
+
+# --- Telegram 通知函数 ---
+def send_telegram_message(message: str, photo_path: str = None) -> bool:
+    """发送 Telegram 消息"""
+    bot_token = TELEGRAM_BOT_TOKEN
+    chat_id = TELEGRAM_CHAT_ID
+    
+    if not bot_token or not chat_id:
+        logger.warning("⚠️ 未设置 Telegram 配置，跳过消息推送")
+        return False
+    
+    try:
+        if photo_path and os.path.exists(photo_path):
+            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+            with open(photo_path, 'rb') as photo:
+                files = {'photo': photo}
+                data = {
+                    'chat_id': chat_id,
+                    'caption': message,
+                    'parse_mode': 'Markdown'
+                }
+                response = requests.post(url, files=files, data=data, timeout=30)
+        else:
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            data = {
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': 'Markdown'
+            }
+            response = requests.post(url, json=data, timeout=30)
+        
+        if response.status_code == 200:
+            logger.info("✅ Telegram 消息发送成功")
+            return True
+        else:
+            logger.warning(f"⚠️ Telegram 消息发送失败: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Telegram 消息发送出错: {str(e)}")
+        return False
 
 # login_with_playwright 函数保持不变，此处为完整代码
 def login_with_playwright(page):
@@ -136,6 +182,8 @@ def main():
     """
     主函数，执行一次登录和一次任务，然后退出。
     """
+    start_time = datetime.now()
+    
     logger.info("=" * 60)
     logger.info("🚀 启动 Godlike 自动化任务（单次运行, 固定等待模式）")
     logger.info("=" * 60)
@@ -169,23 +217,66 @@ def main():
                 signal.alarm(0)
 
             if success:
+                end_time = datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                
                 logger.info("\n" + "=" * 60)
                 logger.info("✅ 本轮任务成功完成")
                 logger.info("=" * 60)
+                
+                # 发送成功通知
+                success_message = f"""✅ *Godlike 服务器续期成功*
+
+🕐 开始时间: `{start_time.strftime('%Y-%m-%d %H:%M:%S')}`
+🏁 结束时间: `{end_time.strftime('%Y-%m-%d %H:%M:%S')}`
+⏱️ 执行时长: `{duration:.1f} 秒`
+🔗 服务器: `{SERVER_URL}`
+📊 增加时长: `90 分钟`"""
+                send_telegram_message(success_message)
             else:
                 logger.error("\n" + "=" * 60)
                 logger.error("❌ 本轮任务失败")
                 logger.error("=" * 60)
+                
+                # 发送失败通知
+                error_message = f"""❌ *Godlike 服务器续期失败*
+
+🕐 时间: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+🔗 服务器: `{SERVER_URL}`
+❗ 错误: 任务执行失败
+
+请检查 GitHub Actions 日志"""
+                send_telegram_message(error_message)
                 exit(1)
 
         except TaskTimeoutError as e:
             logger.error(f"🔥 任务强制超时（{TASK_TIMEOUT_SECONDS}秒）！")
             logger.error(f"错误信息: {e}")
             page.screenshot(path="task_force_timeout_error.png")
+            
+            # 发送超时通知
+            timeout_message = f"""❌ *Godlike 服务器续期超时*
+
+🕐 时间: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+🔗 服务器: `{SERVER_URL}`
+❗ 错误: 任务执行超时（{TASK_TIMEOUT_SECONDS}秒）
+
+请检查 GitHub Actions 日志"""
+            send_telegram_message(timeout_message, "task_force_timeout_error.png")
             exit(1)
         except Exception as e:
             logger.error(f"❌ 主程序发生严重错误: {e}")
             page.screenshot(path="main_critical_error.png")
+            
+            # 发送错误通知
+            error_message = f"""❌ *Godlike 服务器续期失败*
+
+🕐 时间: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+🔗 服务器: `{SERVER_URL}`
+❗ 错误: {str(e)}
+
+请检查 GitHub Actions 日志"""
+            send_telegram_message(error_message, "main_critical_error.png")
             exit(1)
         finally:
             logger.info("关闭浏览器，程序结束")
