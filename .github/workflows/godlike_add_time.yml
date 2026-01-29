@@ -5,16 +5,12 @@ on:
   workflow_dispatch:
 
   schedule:
-    # 【【【 核心修改点在这里 】】】
-    # 使用两个 cron 表达式来组合实现"每90分钟"运行一次。
-    # 所有时间均为 UTC 时间。
-    # 第一个表达式：在 0, 3, 6, 9, 12, 15, 18, 21 点的第0分钟运行。
-    - cron: '0 0,3,6,9,12,15,18,21 * * *'
-    # 第二个表达式：在 1, 4, 7, 10, 13, 16, 19, 22 点的第30分钟运行。
-    - cron: '30 1,4,7,10,13,16,19,22 * * *'
+    # 每小时的第20分钟执行一次（UTC 时间）
+    # 例如：00:20, 01:20, 02:20, 03:20, ...
+    - cron: '20 * * * *'
 
 jobs:
-  add_time_job:
+  godlike_add_time_job:
     runs-on: ubuntu-latest
 
     permissions:
@@ -77,6 +73,8 @@ jobs:
           PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
           PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
           PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         # 使用 -u 参数禁用输出缓冲，确保日志实时显示
         run: python -u godlike_auto_renew.py
 
@@ -89,29 +87,29 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Commit time.txt to repo
-        if: success()
+      - name: Send Telegram Notification
+        if: always()
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 如果 time.txt 不存在，说明是第一次运行
-          if [ ! -f time.txt ]; then
-            echo "首次生成时间：$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S UTC')
+            
+            if [ "${{ job.status }}" == "success" ]; then
+              MESSAGE="✅ Godlike 服务器续期成功%0A%0A🕐 执行时间: ${TIMESTAMP}%0A🔗 服务器: ${{ secrets.SERVER_URL }}%0A📊 运行编号: #${{ github.run_number }}"
+            else
+              MESSAGE="❌ Godlike 服务器续期失败%0A%0A🕐 执行时间: ${TIMESTAMP}%0A🔗 服务器: ${{ secrets.SERVER_URL }}%0A📊 运行编号: #${{ github.run_number }}%0A%0A请检查 GitHub Actions 日志"
+            fi
+            
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${MESSAGE}" \
+              -d "parse_mode=HTML"
+            
+            echo "✅ Telegram 通知已发送"
           else
-            echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          fi
-
-          git add time.txt
-
-          # 如果有更改再提交
-          if git diff --cached --quiet; then
-            echo "无变化，无需提交"
-          else
-            git commit -m "✅ 更新时间文件: $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin HEAD:main
+            echo "⚠️ 未配置 Telegram，跳过通知"
           fi
 
       - name: 清理工作流记录
