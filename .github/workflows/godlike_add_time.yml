@@ -73,6 +73,7 @@ jobs:
 
       - name: Run Time Adder Script
         env:
+          SERVER_URL: ${{ secrets.SERVER_URL }}
           PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
           PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
           PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
