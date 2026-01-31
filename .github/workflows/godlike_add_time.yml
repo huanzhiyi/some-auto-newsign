@@ -58,14 +58,8 @@ jobs:
           pip install --default-timeout=300 --retries 3 playwright requests --no-cache-dir
 
       - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
           playwright install chromium --with-deps
-
-      - name: Install Playwright dependencies only
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: |
-          playwright install-deps chromium
 
       - name: Run Time Adder Script
         env:
@@ -121,4 +115,3 @@ jobs:
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
           keep_minimum_runs: 3
-
