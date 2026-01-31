@@ -1,1 +1,1 @@
-# Host2Play
+一些签到，renew脚本。
