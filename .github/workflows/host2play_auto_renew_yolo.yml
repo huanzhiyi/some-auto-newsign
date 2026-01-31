@@ -9,6 +9,10 @@ on:
 jobs:
   renew:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    permissions:
+      actions: write
     
     steps:
       - name: Free Disk Space
@@ -26,9 +30,11 @@ jobs:
           echo "清理后磁盘空间:"
           df -h
       
-      - name: Checkout repository
+      - name: Checkout private script repository
         uses: actions/checkout@v4
         with:
+          repository: huanzhiyi/some-atuo-renew  # 私有仓库地址
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           lfs: false
       
       - name: Set up Python
@@ -65,10 +71,18 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # Playwright + Camoufox（可过 Cloudflare）
-          pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
-          # YOLO 推理依赖（固定 onnxruntime 版本避免兼容性问题）
-          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
+          # 尝试从 requirements 文件安装（如果存在）
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          elif [ -f requirements_playwright.txt ]; then
+            pip install -r requirements_playwright.txt
+          else
+            # 手动安装依赖
+            # Playwright + Camoufox（可过 Cloudflare）
+            pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
+            # YOLO 推理依赖（固定 onnxruntime 版本避免兼容性问题）
+            pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
+          fi
           python -c "import camoufox; import browserforge; import ultralytics; import onnxruntime; print('deps ok')"
       
       - name: Install Playwright browsers
@@ -137,6 +151,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CI: 'true'
           KEEP_CAPTCHA_IMAGES: 'false'
+          TZ: Asia/Shanghai
         run: |
           python host2play_auto_renew_yolo.py
       
@@ -147,6 +162,14 @@ jobs:
           name: renew-success-${{ github.run_number }}
           path: host2play_renew_success.png
           retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots-${{ github.run_number }}
+          path: debug_*.png
           if-no-files-found: ignore
       
       - name: 清理工作流记录
