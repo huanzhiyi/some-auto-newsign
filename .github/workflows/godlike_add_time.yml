@@ -15,6 +15,7 @@ jobs:
 
     permissions:
       contents: write
+      actions: write
     # 由于脚本现在是单次运行，不再需要长时间的 timeout
     # 设置一个合理的超时，例如10分钟，防止意外卡死
     timeout-minutes: 10
