@@ -6,7 +6,7 @@ on:
 
   # 定时执行（每天 UTC 00:00）
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '30 0-17 * * *'
 
 jobs:
   falixnodes_start_job:
@@ -125,3 +125,4 @@ jobs:
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
           keep_minimum_runs: 3
+
