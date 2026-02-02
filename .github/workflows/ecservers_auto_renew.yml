@@ -45,37 +45,33 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Cache Playwright browsers
+      - name: Cache Camoufox browser
         uses: actions/cache@v3
-        id: playwright-cache
+        id: camoufox-cache
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-v1
+          path: |
+            ~/.camoufox
+            .camoufox_cache
+          key: camoufox-${{ runner.os }}-v1
           restore-keys: |
-            playwright-${{ runner.os }}-chromium-
+            camoufox-${{ runner.os }}-
       
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           
-          # 安装 Playwright 和其他依赖
+          # 安装 Playwright 和 Camoufox
           if [ -f requirements_playwright.txt ]; then
             pip install -r requirements_playwright.txt --default-timeout=300 --retries 3
           else
-            pip install playwright --default-timeout=300 --retries 3
+            pip install playwright camoufox --default-timeout=300 --retries 3
           fi
           
           echo "✅ Python 依赖安装完成"
       
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - name: Install Camoufox browser
         run: |
-          playwright install chromium --with-deps
-      
-      - name: Install Playwright dependencies only
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: |
-          playwright install-deps chromium
+          python -m camoufox fetch
       
       - name: Run EC Servers Auto Renew Script
         env:
