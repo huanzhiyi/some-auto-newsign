@@ -90,7 +90,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ecservers-success-${{ github.run_number }}
-          path: final_status.png
+          path: |
+            final_status.png
+            no_servers.png
+            *.png
           retention-days: 7
           if-no-files-found: ignore
       
