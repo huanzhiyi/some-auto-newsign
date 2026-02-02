@@ -1,0 +1,127 @@
+name: Falixnodes Auto Start Server
+
+on:
+  # 允许在 Actions 页面手动触发
+  workflow_dispatch:
+
+  # 定时执行（每天 UTC 00:00）
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  falixnodes_start_job:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      actions: write
+
+    # 超时设置：15分钟（包含 Cloudflare 验证和广告等待时间）
+    timeout-minutes: 15
+
+    steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+          
+          echo "删除不必要的文件..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          
+          echo "清理后磁盘空间:"
+          df -h
+
+      - name: Checkout private script repository
+        uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew  # 私有仓库地址
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-firefox-${{ hashFiles('requirements_playwright.txt') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-firefox-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          
+          # 安装依赖
+          if [ -f requirements_playwright.txt ]; then
+            pip install -r requirements_playwright.txt --default-timeout=300 --retries 3
+          else
+            pip install playwright camoufox[geoip] browserforge --default-timeout=300 --retries 3
+          fi
+
+      - name: Install Playwright browsers
+        run: |
+          # 安装 Firefox（Camoufox 基于 Firefox）
+          playwright install firefox --with-deps
+
+      - name: Run Falixnodes Auto Start Script
+        env:
+          FALIXNODES_SERVER_URLS: ${{ secrets.FALIXNODES_SERVER_URLS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TZ: Asia/Shanghai
+        run: |
+          echo "🚀 开始执行 Falixnodes 自动启动脚本..."
+          python -u falixnodes_auto_start.py
+
+      - name: Upload error artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshots-${{ github.run_number }}
+          path: "*.png"
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Send Telegram Notification
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S %Z')
+            
+            if [ "${{ job.status }}" == "success" ]; then
+              MESSAGE="✅ Falixnodes 服务器启动成功%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}"
+            else
+              MESSAGE="❌ Falixnodes 服务器启动失败%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}%0A%0A请检查 GitHub Actions 日志"
+            fi
+            
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${MESSAGE}" \
+              -d "parse_mode=HTML"
+            
+            echo "✅ Telegram 通知已发送"
+          else
+            echo "⚠️ 未配置 Telegram，跳过通知"
+          fi
+
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
