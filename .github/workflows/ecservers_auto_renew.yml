@@ -116,9 +116,9 @@ jobs:
             TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S %Z')
             
             if [ "${{ job.status }}" == "success" ]; then
-              MESSAGE="✅ EC Servers 自动续期成功%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}"
+              MESSAGE="✅ EC Servers 自动保活成功%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}%0A%0A✨ 服务器状态已检查并保持运行"
             else
-              MESSAGE="❌ EC Servers 自动续期失败%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}%0A%0A请检查 GitHub Actions 日志"
+              MESSAGE="❌ EC Servers 自动保活失败%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}%0A%0A请检查 GitHub Actions 日志"
             fi
             
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
