@@ -1,0 +1,146 @@
+name: EC Servers Auto Renew
+
+on:
+  # 定时执行（每3天运行一次，UTC 02:00 = 北京时间 10:00）
+  schedule:
+    - cron: '0 2 */3 * *'
+  
+  # 允许在 Actions 页面手动触发
+  workflow_dispatch:
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    permissions:
+      contents: read
+      actions: write
+    
+    steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+          
+          echo "删除不必要的文件..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          
+          echo "清理后磁盘空间:"
+          df -h
+      
+      - name: Checkout private script repository
+        uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew  # 私有仓库地址
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-v1
+          restore-keys: |
+            playwright-${{ runner.os }}-chromium-
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          
+          # 安装 Playwright 和其他依赖
+          if [ -f requirements_playwright.txt ]; then
+            pip install -r requirements_playwright.txt --default-timeout=300 --retries 3
+          else
+            pip install playwright --default-timeout=300 --retries 3
+          fi
+          
+          echo "✅ Python 依赖安装完成"
+      
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          playwright install chromium --with-deps
+      
+      - name: Install Playwright dependencies only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          playwright install-deps chromium
+      
+      - name: Run EC Servers Auto Renew Script
+        env:
+          ECSERVERS_EMAIL: ${{ secrets.ECSERVERS_EMAIL }}
+          ECSERVERS_PASSWORD: ${{ secrets.ECSERVERS_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TZ: Asia/Shanghai
+          GITHUB_ACTIONS: 'true'
+        run: |
+          echo "🚀 开始执行 EC Servers 自动续期脚本..."
+          python -u ecservers_auto_renew.py
+      
+      - name: Upload success screenshot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecservers-success-${{ github.run_number }}
+          path: final_status.png
+          retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: Upload error screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecservers-error-${{ github.run_number }}
+          path: |
+            login_failed.png
+            error_screenshot.png
+            *.png
+          retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: Send Telegram Notification
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S %Z')
+            
+            if [ "${{ job.status }}" == "success" ]; then
+              MESSAGE="✅ EC Servers 自动续期成功%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}"
+            else
+              MESSAGE="❌ EC Servers 自动续期失败%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}%0A%0A请检查 GitHub Actions 日志"
+            fi
+            
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${MESSAGE}" \
+              -d "parse_mode=HTML"
+            
+            echo "✅ Telegram 通知已发送"
+          else
+            echo "⚠️ 未配置 Telegram，跳过通知"
+          fi
+      
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
