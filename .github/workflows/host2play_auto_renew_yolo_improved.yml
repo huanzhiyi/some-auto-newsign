@@ -1,0 +1,282 @@
+name: Host2Play Auto Renew (YOLO Improved)
+
+on:
+  schedule:
+    # 每6小时运行一次
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20  # 增加超时时间（需要下载两个模型）
+    
+    permissions:
+      actions: write
+    
+    steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+          
+          echo "删除不必要的文件..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          
+          echo "清理后磁盘空间:"
+          df -h
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew  # 您的私有仓库
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget curl
+      
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-v1
+      
+      - name: Cache VisionAI Classification Model
+        uses: actions/cache@v3
+        id: classification-model-cache
+        with:
+          path: tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx
+          key: visionai-classification-model-v1
+          restore-keys: |
+            visionai-classification-model-
+      
+      - name: Cache Detection Model
+        uses: actions/cache@v3
+        id: detection-model-cache
+        with:
+          path: tmp_rovodev_recaptcha_ia/model.onnx
+          key: detection-model-onnx-v1
+          restore-keys: |
+            detection-model-onnx-
+      
+      - name: Cache Camoufox browser
+        uses: actions/cache@v3
+        id: camoufox-cache
+        with:
+          path: .camoufox_cache
+          key: camoufox-${{ runner.os }}-v1
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          
+          # 优先使用 requirements 文件
+          if [ -f requirements_playwright.txt ]; then
+            echo "📦 从 requirements_playwright.txt 安装依赖..."
+            pip install -r requirements_playwright.txt
+          elif [ -f requirements.txt ]; then
+            echo "📦 从 requirements.txt 安装依赖..."
+            pip install -r requirements.txt
+          else
+            echo "📦 手动安装核心依赖..."
+            # Playwright + Camoufox
+            pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
+            # YOLO 推理依赖
+            pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
+          fi
+          
+          # 验证依赖安装
+          python -c "import camoufox; import browserforge; import ultralytics; import onnxruntime; print('✅ 依赖安装成功')"
+      
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "📥 安装 Playwright Chromium..."
+          playwright install chromium --with-deps
+
+      - name: Install Playwright dependencies only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "📦 安装 Playwright 系统依赖..."
+          playwright install-deps chromium
+      
+      - name: Download VisionAI Classification Model
+        if: steps.classification-model-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "🔍 分类模型缓存未命中，开始下载..."
+          mkdir -p tmp_rovodev_recaptcha_ia
+          
+          echo "📥 下载 VisionAI 分类模型 (recaptcha_classification_57k.onnx)..."
+          echo "来源: HuggingFace - DannyLuna/recaptcha-classification-57k"
+          
+          curl -L -o tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx \
+            "https://huggingface.co/DannyLuna/recaptcha-classification-57k/resolve/main/recaptcha_classification_57k.onnx?download=true" \
+            --connect-timeout 60 \
+            --max-time 600 \
+            --retry 3 \
+            --retry-delay 5 && {
+            
+            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx)
+            
+            if [ $FILE_SIZE -gt 100000000 ]; then
+              echo "✅ 分类模型下载成功！"
+              echo "   文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+            else
+              echo "❌ 文件大小异常: $FILE_SIZE bytes"
+              echo "ℹ️ 脚本会在运行时重新下载"
+              rm -f tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx
+            fi
+          } || {
+            echo "⚠️ 下载失败，但脚本内置了自动下载功能"
+          }
+      
+      - name: Download Detection Model
+        if: steps.detection-model-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "🔍 检测模型缓存未命中，开始下载..."
+          mkdir -p tmp_rovodev_recaptcha_ia
+          
+          echo "📥 下载检测模型 (model.onnx)..."
+          echo "来源: DannyLuna17/RecaptchaV2-IA-Solver"
+          
+          # 方法1: GitHub LFS media
+          echo "🔄 尝试方法 1: GitHub LFS media..."
+          curl -L -o tmp_rovodev_recaptcha_ia/model.onnx \
+            "https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx" \
+            --connect-timeout 60 \
+            --max-time 600 \
+            --retry 3 && {
+            
+            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/model.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/model.onnx)
+            
+            if [ $FILE_SIZE -gt 100000000 ]; then
+              echo "✅ 检测模型下载成功！"
+              echo "   文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+              exit 0
+            fi
+          }
+          
+          # 方法2: GitHub raw
+          echo "⚠️ 方法 1 失败，尝试方法 2: GitHub raw..."
+          rm -f tmp_rovodev_recaptcha_ia/model.onnx
+          curl -L -o tmp_rovodev_recaptcha_ia/model.onnx \
+            "https://github.com/DannyLuna17/RecaptchaV2-IA-Solver/raw/main/model.onnx" \
+            --connect-timeout 60 \
+            --max-time 600 \
+            --retry 3 && {
+            
+            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/model.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/model.onnx)
+            
+            if [ $FILE_SIZE -gt 100000000 ]; then
+              echo "✅ 检测模型下载成功！"
+              echo "   文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+              exit 0
+            fi
+          }
+          
+          echo "⚠️ 所有下载方法均失败，但脚本内置了自动下载功能"
+      
+      - name: Verify Models
+        run: |
+          echo "🔍 验证模型文件..."
+          echo ""
+          
+          # 验证分类模型
+          if [ -f tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx ]; then
+            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx)
+            echo "📊 分类模型 (recaptcha_classification_57k.onnx):"
+            echo "   文件大小: $FILE_SIZE bytes ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
+            
+            if [ $FILE_SIZE -lt 100000000 ]; then
+              echo "   ⚠️ 警告: 文件大小异常 (应该 ~108 MB)"
+            else
+              echo "   ✅ 验证通过"
+            fi
+          else
+            echo "📊 分类模型: ❌ 不存在（脚本将自动下载）"
+          fi
+          
+          echo ""
+          
+          # 验证检测模型
+          if [ -f tmp_rovodev_recaptcha_ia/model.onnx ]; then
+            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/model.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/model.onnx)
+            echo "📊 检测模型 (model.onnx):"
+            echo "   文件大小: $FILE_SIZE bytes ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
+            
+            if [ $FILE_SIZE -lt 100000000 ]; then
+              echo "   ⚠️ 警告: 文件大小异常 (应该 ~260 MB)"
+            else
+              echo "   ✅ 验证通过"
+            fi
+          else
+            echo "📊 检测模型: ❌ 不存在（脚本将自动下载）"
+          fi
+          
+          echo ""
+          echo "ℹ️ 注意: 即使模型不存在，脚本也会自动下载"
+      
+      - name: Run improved auto renew script
+        env:
+          RENEW_URL: ${{ secrets.RENEW_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CI: 'true'
+          GITHUB_ACTIONS: 'true'
+          KEEP_CAPTCHA_IMAGES: 'false'
+          TZ: Asia/Shanghai
+        run: |
+          echo "🚀 运行改进版 YOLO 续期脚本..."
+          echo "📊 策略: VisionAI 双模型（分类 + 检测）"
+          echo ""
+          python host2play_auto_renew_yolo_improved.py
+      
+      - name: Upload success screenshot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-success-improved-${{ github.run_number }}
+          path: host2play_renew_success.png
+          retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: Upload error screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-error-improved-${{ github.run_number }}
+          path: host2play_error*.png
+          retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots-improved-${{ github.run_number }}
+          path: debug_*.png
+          retention-days: 3
+          if-no-files-found: ignore
+      
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
