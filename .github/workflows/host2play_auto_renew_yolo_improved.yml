@@ -59,18 +59,9 @@ jobs:
         id: classification-model-cache
         with:
           path: tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx
-          key: visionai-classification-model-v1
+          key: visionai-classification-model-v2
           restore-keys: |
             visionai-classification-model-
-      
-      - name: Cache Detection Model
-        uses: actions/cache@v3
-        id: detection-model-cache
-        with:
-          path: tmp_rovodev_recaptcha_ia/model.onnx
-          key: detection-model-onnx-v1
-          restore-keys: |
-            detection-model-onnx-
       
       - name: Cache Camoufox browser
         uses: actions/cache@v3
@@ -143,53 +134,9 @@ jobs:
             echo "⚠️ 下载失败，但脚本内置了自动下载功能"
           }
       
-      - name: Download Detection Model
-        if: steps.detection-model-cache.outputs.cache-hit != 'true'
-        run: |
-          echo "🔍 检测模型缓存未命中，开始下载..."
-          mkdir -p tmp_rovodev_recaptcha_ia
-          
-          echo "📥 下载检测模型 (model.onnx)..."
-          echo "来源: DannyLuna17/RecaptchaV2-IA-Solver"
-          
-          # 方法1: GitHub LFS media
-          echo "🔄 尝试方法 1: GitHub LFS media..."
-          curl -L -o tmp_rovodev_recaptcha_ia/model.onnx \
-            "https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx" \
-            --connect-timeout 60 \
-            --max-time 600 \
-            --retry 3 && {
-            
-            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/model.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/model.onnx)
-            
-            if [ $FILE_SIZE -gt 100000000 ]; then
-              echo "✅ 检测模型下载成功！"
-              echo "   文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
-              exit 0
-            fi
-          }
-          
-          # 方法2: GitHub raw
-          echo "⚠️ 方法 1 失败，尝试方法 2: GitHub raw..."
-          rm -f tmp_rovodev_recaptcha_ia/model.onnx
-          curl -L -o tmp_rovodev_recaptcha_ia/model.onnx \
-            "https://github.com/DannyLuna17/RecaptchaV2-IA-Solver/raw/main/model.onnx" \
-            --connect-timeout 60 \
-            --max-time 600 \
-            --retry 3 && {
-            
-            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/model.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/model.onnx)
-            
-            if [ $FILE_SIZE -gt 100000000 ]; then
-              echo "✅ 检测模型下载成功！"
-              echo "   文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
-              exit 0
-            fi
-          }
-          
-          echo "⚠️ 所有下载方法均失败，但脚本内置了自动下载功能"
+      # 移除检测模型下载步骤（不再需要）
       
-      - name: Verify Models
+      - name: Verify Model
         run: |
           echo "🔍 验证模型文件..."
           echo ""
@@ -197,7 +144,7 @@ jobs:
           # 验证分类模型
           if [ -f tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx ]; then
             FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/recaptcha_classification_57k.onnx)
-            echo "📊 分类模型 (recaptcha_classification_57k.onnx):"
+            echo "📊 VisionAI 分类模型 (recaptcha_classification_57k.onnx):"
             echo "   文件大小: $FILE_SIZE bytes ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
             
             if [ $FILE_SIZE -lt 100000000 ]; then
@@ -206,30 +153,15 @@ jobs:
               echo "   ✅ 验证通过"
             fi
           else
-            echo "📊 分类模型: ❌ 不存在（脚本将自动下载）"
+            echo "📊 VisionAI 分类模型: ❌ 不存在（脚本将自动下载）"
           fi
           
           echo ""
-          
-          # 验证检测模型
-          if [ -f tmp_rovodev_recaptcha_ia/model.onnx ]; then
-            FILE_SIZE=$(stat -c%s tmp_rovodev_recaptcha_ia/model.onnx 2>/dev/null || stat -f%z tmp_rovodev_recaptcha_ia/model.onnx)
-            echo "📊 检测模型 (model.onnx):"
-            echo "   文件大小: $FILE_SIZE bytes ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
-            
-            if [ $FILE_SIZE -lt 100000000 ]; then
-              echo "   ⚠️ 警告: 文件大小异常 (应该 ~260 MB)"
-            else
-              echo "   ✅ 验证通过"
-            fi
-          else
-            echo "📊 检测模型: ❌ 不存在（脚本将自动下载）"
-          fi
-          
-          echo ""
-          echo "ℹ️ 注意: 即使模型不存在，脚本也会自动下载"
+          echo "ℹ️ 说明: 完全基于 VisionAI 逻辑，仅使用分类模型"
+          echo "ℹ️ 支持: 3x3 验证（动态和选择）"
+          echo "ℹ️ 不支持: 4x4 方格验证（会自动跳过）"
       
-      - name: Run improved auto renew script
+      - name: Run VisionAI-based auto renew script
         env:
           RENEW_URL: ${{ secrets.RENEW_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -239,8 +171,11 @@ jobs:
           KEEP_CAPTCHA_IMAGES: 'false'
           TZ: Asia/Shanghai
         run: |
-          echo "🚀 运行改进版 YOLO 续期脚本..."
-          echo "📊 策略: VisionAI 双模型（分类 + 检测）"
+          echo "🚀 运行 VisionAI 续期脚本..."
+          echo "📊 策略: 完全基于 VisionAI 逻辑"
+          echo "📊 模型: 仅分类模型 (recaptcha_classification_57k.onnx)"
+          echo "✅ 支持: 3x3 验证（动态和选择）"
+          echo "⏭️ 跳过: 4x4 方格验证"
           echo ""
           python host2play_auto_renew_yolo_improved.py
       
