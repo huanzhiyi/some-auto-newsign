@@ -1,9 +1,8 @@
 name: EC Servers Auto Renew
 
 on:
-  # 定时执行（每3天运行一次，UTC 02:00 = 北京时间 10:00）
   schedule:
-    - cron: '0 2 */3 * *'
+    - cron: '0 0 * * *'
   
   # 允许在 Actions 页面手动触发
   workflow_dispatch:
@@ -143,3 +142,4 @@ jobs:
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
           keep_minimum_runs: 3
+
