@@ -1,9 +1,9 @@
 name: Host2Play Auto Renew (YOLO Improved)
 
 on:
-  schedule:
+  #schedule:
     # 每6小时运行一次
-    - cron: '0 */6 * * *'
+    #- cron: '0 */6 * * *'
   workflow_dispatch:  # 允许手动触发
 
 jobs:
@@ -215,3 +215,4 @@ jobs:
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
           keep_minimum_runs: 3
+
