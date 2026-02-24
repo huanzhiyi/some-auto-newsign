@@ -1,0 +1,160 @@
+name: Host2Play Auto Renew (VisionAI Package)
+
+on:
+  schedule:
+    # 每天 UTC 00:00 / 06:00 / 12:00 / 18:00 各运行一次（北京时间 08/14/20/02）
+    - cron: '0 0,6,12,18 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # vision-ai-recaptcha-solver 首次运行需下载 yolo12x.pt (~700MB)
+
+    permissions:
+      actions: write
+
+    steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+
+          echo "删除不必要的文件..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+
+          echo "清理后磁盘空间:"
+          df -h
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew  # 您的私有仓库
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wget curl chromium-browser chromium-chromedriver
+
+      # vision-ai-recaptcha-solver 会在 ~/.cache/ultralytics 和
+      # ~/.cache/vision_ai 下自动缓存模型文件，缓存可大幅加速后续运行
+      - name: Cache VisionAI models (yolo12x.pt + classification model)
+        uses: actions/cache@v4
+        id: visionai-model-cache
+        with:
+          path: |
+            ~/.cache/ultralytics
+            ~/.cache/vision_ai
+            ~/ultralytics
+          key: visionai-models-${{ runner.os }}-v1
+          restore-keys: |
+            visionai-models-${{ runner.os }}-
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-visionai-${{ runner.os }}-${{ hashFiles('requirements_visionai.txt') }}
+          restore-keys: |
+            pip-visionai-${{ runner.os }}-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+
+          echo "📦 从 requirements_visionai.txt 安装依赖..."
+          pip install -r requirements_visionai.txt
+
+          echo ""
+          echo "🔍 验证依赖安装..."
+          python -c "
+          from vision_ai_recaptcha_solver import RecaptchaSolver, SolverConfig
+          import undetected_chromedriver
+          import selenium
+          print('✅ vision-ai-recaptcha-solver:', __import__('importlib.metadata', fromlist=['version']).version('vision-ai-recaptcha-solver'))
+          print('✅ undetected-chromedriver:', undetected_chromedriver.__version__)
+          print('✅ selenium:', selenium.__version__)
+          "
+
+      - name: Check Chrome installation
+        run: |
+          echo "🔍 检查 Chrome / Chromium..."
+          which chromium-browser || which google-chrome || which chromium || echo "⚠ 未找到 Chrome"
+          chromium-browser --version 2>/dev/null || google-chrome --version 2>/dev/null || chromium --version 2>/dev/null || true
+
+          echo ""
+          echo "🔍 检查 ChromeDriver..."
+          which chromedriver || echo "⚠ 未找到 chromedriver"
+          chromedriver --version 2>/dev/null || true
+
+      - name: Show model cache status
+        run: |
+          echo "📂 模型缓存状态:"
+          echo "  ~/.cache/ultralytics:"
+          ls -lh ~/.cache/ultralytics/ 2>/dev/null || echo "    (空 - 首次运行将自动下载)"
+          echo "  ~/.cache/vision_ai:"
+          ls -lh ~/.cache/vision_ai/ 2>/dev/null || echo "    (空 - 首次运行将自动下载)"
+          echo ""
+          if [ "${{ steps.visionai-model-cache.outputs.cache-hit }}" == "true" ]; then
+            echo "✅ 模型缓存命中，无需重新下载"
+          else
+            echo "ℹ️ 模型缓存未命中，首次运行将自动下载（约 700MB，需要几分钟）"
+          fi
+
+      - name: Run VisionAI auto renew script
+        env:
+          RENEW_URL: ${{ secrets.RENEW_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CI: 'true'
+          GITHUB_ACTIONS: 'true'
+          TZ: Asia/Shanghai
+          # 让 undetected-chromedriver 使用系统 chromium
+          CHROME_EXECUTABLE_PATH: /usr/bin/chromium-browser
+        run: |
+          echo "🚀 运行 VisionAI 续期脚本..."
+          echo "📦 方案: vision-ai-recaptcha-solver Python 包"
+          echo "✅ 优点: 模型自动下载管理，无需手动维护模型文件"
+          echo ""
+          python host2play_auto_renew_visionai.py
+
+      - name: Upload success screenshot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-success-visionai-${{ github.run_number }}
+          path: host2play_renew_visionai_success.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload error screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-error-visionai-${{ github.run_number }}
+          path: |
+            host2play_error*.png
+            debug_*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
