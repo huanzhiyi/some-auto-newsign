@@ -73,10 +73,10 @@ jobs:
           from camoufox.async_api import AsyncCamoufox
           from vision_ai_recaptcha_solver.detector.yolo_detector import YOLODetector
           from PIL import Image
-          import playwright
+          import importlib.metadata
           print('camoufox OK')
           print('vision_ai_recaptcha_solver OK')
-          print('playwright:', playwright.__version__)
+          print('playwright:', importlib.metadata.version('playwright'))
           "
 
       - name: Run renewal script
