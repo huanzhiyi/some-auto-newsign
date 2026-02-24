@@ -70,6 +70,14 @@ jobs:
           restore-keys: |
             camoufox-${{ runner.os }}-
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-v1
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -78,7 +86,10 @@ jobs:
             "playwright>=1.40.0" \
             "vision-ai-recaptcha-solver>=1.0.5" \
             "Pillow>=10.0.0" \
-            "requests>=2.28.0"
+            "requests>=2.28.0" \
+            "opencv-python-headless>=4.8.0" \
+            "numpy>=1.24.0" \
+            "ultralytics>=8.3.0"
 
       - name: Install Playwright browsers
         run: playwright install chromium --with-deps
