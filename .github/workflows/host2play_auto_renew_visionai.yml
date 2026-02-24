@@ -65,7 +65,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-visionai-${{ runner.os }}-${{ hashFiles('requirements_visionai.txt') }}
+          key: pip-visionai-${{ runner.os }}-vision1.0.5-ucd3.5-selenium4
           restore-keys: |
             pip-visionai-${{ runner.os }}-
 
@@ -73,8 +73,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
 
-          echo "📦 从 requirements_visionai.txt 安装依赖..."
-          pip install -r requirements_visionai.txt
+          echo "📦 安装依赖..."
+          pip install \
+            "vision-ai-recaptcha-solver>=1.0.5" \
+            "undetected-chromedriver>=3.5.0" \
+            "selenium>=4.0.0"
 
           echo ""
           echo "🔍 验证依赖安装..."
