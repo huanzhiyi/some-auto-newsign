@@ -16,9 +16,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    permissions:
+      actions: write
+
     steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "清理后磁盘空间:"
+          df -h
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -95,3 +114,13 @@ jobs:
           name: renewal-log-${{ github.run_number }}
           path: log.txt
           retention-days: 7
+
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
