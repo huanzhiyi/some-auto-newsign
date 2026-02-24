@@ -1,9 +1,9 @@
 name: Host2Play Auto Renew (VisionAI)
 
 on:
-  schedule:
+  #schedule:
     # 每天 UTC 0/6/12/18 点各运行一次
-    - cron: '0 0,6,12,18 * * *'
+    #- cron: '0 0,6,12,18 * * *'
   workflow_dispatch:
     inputs:
       renew_url:
@@ -135,3 +135,4 @@ jobs:
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
           keep_minimum_runs: 3
+
