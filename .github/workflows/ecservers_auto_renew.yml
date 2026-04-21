@@ -1,8 +1,8 @@
 name: EC Servers Auto Renew
 
 on:
-  schedule:
-    - cron: '0 0 * * *'
+  #schedule:
+    #- cron: '0 0 * * *'
   
   # 允许在 Actions 页面手动触发
   workflow_dispatch:
