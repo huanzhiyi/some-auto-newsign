@@ -4,10 +4,10 @@ on:
   # 允许在 Actions 页面手动触发此工作流，方便测试
   workflow_dispatch:
 
-  schedule:
+  #schedule:
     # 每小时的第20分钟执行一次（UTC 时间）
     # 例如：00:20, 01:20, 02:20, 03:20, ...
-    - cron: '20 * * * *'
+    #- cron: '20 * * * *'
 
 jobs:
   godlike_add_time_job:
