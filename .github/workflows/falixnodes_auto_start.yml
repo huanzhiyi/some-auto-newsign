@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
 
   # 定时执行（每天 UTC 00:00）
-  schedule:
-    - cron: '30 0-17 * * *'
+  #schedule:
+    #- cron: '30 0-17 * * *'
 
 jobs:
   falixnodes_start_job:
