@@ -65,8 +65,13 @@ jobs:
             "aiohttp>=3.9.0" \
             "click>=8.1.0"
 
-      - name: Install Playwright browsers
-        run: playwright install chromium --with-deps
+      - name: Install Chromium browser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
+          echo "[INFO] Installed Chromium:"
+          which chromium-browser || which chromium || true
+          chromium-browser --version || chromium --version || true
 
       - name: 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
@@ -106,10 +111,7 @@ jobs:
       - name: Detect Chromium path
         id: chromium
         run: |
-          CHROMIUM_PATH=$(find ~/.cache/ms-playwright -name "chrome" -type f 2>/dev/null | head -1)
-          if [ -z "$CHROMIUM_PATH" ]; then
-            CHROMIUM_PATH=$(which google-chrome 2>/dev/null || which chromium 2>/dev/null || echo "")
-          fi
+          CHROMIUM_PATH=$(which chromium-browser 2>/dev/null || which chromium 2>/dev/null || which google-chrome 2>/dev/null || echo "")
           echo "path=$CHROMIUM_PATH" >> $GITHUB_OUTPUT
           echo "[INFO] Chromium path: $CHROMIUM_PATH"
 
