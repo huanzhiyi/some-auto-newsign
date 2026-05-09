@@ -39,24 +39,6 @@ jobs:
           restore-keys: |
             pip-visionai-${{ runner.os }}-
 
-      - name: Cache YOLO model
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/ultralytics
-            ~/.cache/vision_ai_recaptcha_solver
-          key: yolo-model-v1
-          restore-keys: |
-            yolo-model-
-
-      - name: Cache Camoufox browser
-        uses: actions/cache@v4
-        with:
-          path: ~/.camoufox
-          key: camoufox-${{ runner.os }}-v1
-          restore-keys: |
-            camoufox-${{ runner.os }}-
-
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
