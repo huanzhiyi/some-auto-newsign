@@ -103,6 +103,16 @@ jobs:
           print('playwright:', importlib.metadata.version('playwright'))
           "
 
+      - name: Detect Chromium path
+        id: chromium
+        run: |
+          CHROMIUM_PATH=$(find ~/.cache/ms-playwright -name "chrome" -type f 2>/dev/null | head -1)
+          if [ -z "$CHROMIUM_PATH" ]; then
+            CHROMIUM_PATH=$(which google-chrome 2>/dev/null || which chromium 2>/dev/null || echo "")
+          fi
+          echo "path=$CHROMIUM_PATH" >> $GITHUB_OUTPUT
+          echo "[INFO] Chromium path: $CHROMIUM_PATH"
+
       - name: Run renewal script
         env:
           CI: true
@@ -110,6 +120,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
+          BROWSER_PATH: ${{ steps.chromium.outputs.path }}
         run: python host2play_auto_renew_visionai.py
 
       - name: Upload log artifact
