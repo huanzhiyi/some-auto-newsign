@@ -52,12 +52,38 @@ jobs:
           python -m pip install --upgrade pip
           pip install \
             "playwright>=1.40.0" \
-            "vision-ai-recaptcha-solver>=1.0.5" \
             "Pillow>=10.0.0" \
-            "requests>=2.28.0"
+            "requests>=2.28.0" \
+            "httpx>=0.25.0" \
+            "opencv-python-headless>=4.8.0" \
+            "numpy>=1.24.0" \
+            "ultralytics>=8.3.0" \
+            "huggingface-hub>=0.20.0" \
+            "onnxruntime>=1.16.0"
 
       - name: Install Playwright browsers
         run: playwright install chromium --with-deps
+
+      - name: Download YOLO models
+        run: |
+          python -c "
+          import os
+          from huggingface_hub import hf_hub_download
+          # Download classification model (ONNX)
+          if not os.path.exists('recaptcha_classification_57k.onnx'):
+              print('Downloading recaptcha_classification_57k.onnx...')
+              hf_hub_download(
+                  repo_id='DannyLuna/recaptcha-classification-57k',
+                  filename='recaptcha_classification_57k.onnx',
+                  local_dir='.'
+              )
+          # Download detection model (yolo12x)
+          if not os.path.exists('yolo12x.pt'):
+              print('Downloading yolo12x.pt...')
+              from ultralytics import YOLO
+              YOLO('yolo12x.pt')
+          print('Models ready')
+          "
 
       - name: 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
@@ -88,9 +114,9 @@ jobs:
       - name: Verify dependencies
         run: |
           python -c "
-          from vision_ai_recaptcha_solver import AsyncRecaptchaSolver, SolverConfig
+          from ultralytics import YOLO
           import importlib.metadata
-          print('vision_ai_recaptcha_solver OK')
+          print('ultralytics OK')
           print('playwright:', importlib.metadata.version('playwright'))
           "
 
@@ -100,8 +126,8 @@ jobs:
           RENEW_URL: ${{ inputs.renew_url || secrets.RENEW_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python host2play_auto_renew_visionai.py
+          ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
+        run: python host2play_auto_renew_visionai.py
 
       - name: Upload log artifact
         if: always()
