@@ -74,13 +74,18 @@ jobs:
       - name: Start Hysteria2 proxy
         run: |
           if [ -n "${{ secrets.HY2_URL }}" ]; then
-            # 直接使用 hysteria2:// URL 作为参数
-            nohup ./hysteria2 client "${{ secrets.HY2_URL }}" > hysteria2.log 2>&1 &
+            # 解码 YAML 内容并保存
+            echo "${{ secrets.HY2_URL }}" > hysteria2.yaml
+            cat hysteria2.yaml
+            # 启动 Hysteria2，指定 HTTP 端口
+            nohup ./hysteria2 client -c hysteria2.yaml --http :7890 > hysteria2.log 2>&1 &
             sleep 5
             # 检查进程
             ps aux | grep hysteria2 || echo "[WARN] Hysteria2 process not found"
+            # 检查日志
+            cat hysteria2.log || true
             # 测试代理
-            curl -x http://127.0.0.1:7890 --max-time 5 https://api.ipify.org && echo " [OK] Proxy working" || cat hysteria2.log
+            curl -x http://127.0.0.1:7890 --max-time 10 https://api.ipify.org && echo " [OK] Proxy working" || echo "[WARN] Proxy may not work"
           fi
 
       - name: Run renew script
