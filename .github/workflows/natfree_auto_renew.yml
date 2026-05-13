@@ -61,6 +61,26 @@ jobs:
           seleniumbase install chromedriver
           echo "[INFO] chromedriver installed"
 
+      - name: Install Hysteria2 client
+        run: |
+          if [ "${{ secrets.HY2_URL }}" != "" ]; then
+            wget -q https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -O hysteria2
+            chmod +x hysteria2
+            echo "[INFO] Hysteria2 installed"
+          else
+            echo "[INFO] HY2_URL not set, skip proxy"
+          fi
+
+      - name: Start Hysteria2 proxy
+        if: ${{ secrets.HY2_URL != '' }}
+        run: |
+          nohup ./hysteria2 client --http :7890 "${{ secrets.HY2_URL }}" > hysteria2.log 2>&1 &
+          sleep 5
+          echo "=== Hysteria2 log ==="
+          cat hysteria2.log || true
+          echo "=== Test proxy ==="
+          curl -x http://127.0.0.1:7890 --max-time 10 https://api.ipify.org && echo " [OK]" || echo "[WARN] Proxy not working"
+
       - name: Run renew script
         env:
           CI: true
@@ -69,7 +89,7 @@ jobs:
           NATFREE_PASSWORD: ${{ secrets.NATFREE_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SOCKS5_PROXY: ${{ secrets.SOCKS5_PROXY }}
+          PROXY_SERVER: ${{ secrets.HY2_URL != '' && 'http://127.0.0.1:7890' || '' }}
         run: python natfree_auto_renew.py
 
       - name: Upload screenshots
