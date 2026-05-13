@@ -61,25 +61,22 @@ jobs:
           seleniumbase install chromedriver
           echo "[INFO] chromedriver installed"
 
-      - name: Install Hysteria2 client
+      - name: Install Hysteria2
+        if: secrets.HY2_URL != ''
         run: |
-          if [ "${{ secrets.HY2_URL }}" != "" ]; then
-            wget -q https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -O hysteria2
-            chmod +x hysteria2
-            echo "[INFO] Hysteria2 installed"
-          else
-            echo "[INFO] HY2_URL not set, skip proxy"
-          fi
+          wget -q https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -O hysteria2
+          chmod +x hysteria2
+          echo "[INFO] Hysteria2 installed"
 
       - name: Start Hysteria2 proxy
-        if: ${{ secrets.HY2_URL != '' }}
+        if: secrets.HY2_URL != ''
         run: |
           nohup ./hysteria2 client --http :7890 "${{ secrets.HY2_URL }}" > hysteria2.log 2>&1 &
-          sleep 5
+          sleep 6
           echo "=== Hysteria2 log ==="
           cat hysteria2.log || true
           echo "=== Test proxy ==="
-          curl -x http://127.0.0.1:7890 --max-time 10 https://api.ipify.org && echo " [OK]" || echo "[WARN] Proxy not working"
+          curl -x http://127.0.0.1:7890 --max-time 10 https://api.ipify.org && echo " [OK]" || echo "[WARN] Proxy may not work"
 
       - name: Run renew script
         env:
