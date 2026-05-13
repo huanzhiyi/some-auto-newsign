@@ -2,7 +2,7 @@ name: FreeCloud Auto Renew
 
 on:
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 */12 * * *'
   workflow_dispatch:
     inputs:
       login_url:
@@ -61,11 +61,12 @@ jobs:
           seleniumbase install chromedriver
           echo "[INFO] chromedriver installed"
 
-      - name: 启用 WARP 网络
+      - name: 启用 WARP 网络 (香港节点)
         uses: fscarmen/warp-on-actions@v1.3
         with:
           stack: dual
           mode: client
+          ip: hk
 
       - name: 修复 DNS
         run: |
