@@ -1,44 +1,28 @@
-name: Falixnodes Auto Start Server
+name: FalixNodes Start Server
 
 on:
-  # 允许在 Actions 页面手动触发
+  schedule:
+    - cron: '0 */6 * * *'
   workflow_dispatch:
-
-  # 定时执行（每天 UTC 00:00）
-  #schedule:
-    #- cron: '30 0-17 * * *'
+    inputs:
+      server_url:
+        description: 'Server URL (override secret)'
+        required: false
+        type: string
 
 jobs:
-  falixnodes_start_job:
+  start:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-      actions: write
-
-    # 超时设置：15分钟（包含 Cloudflare 验证和广告等待时间）
     timeout-minutes: 15
 
-    steps:
-      - name: Free Disk Space
-        run: |
-          echo "清理前磁盘空间:"
-          df -h
-          
-          echo "删除不必要的文件..."
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
-          
-          echo "清理后磁盘空间:"
-          df -h
+    permissions:
+      actions: write
 
-      - name: Checkout private script repository
+    steps:
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          repository: huanzhiyi/some-atuo-renew  # 私有仓库地址
+          repository: huanzhiyi/some-atuo-renew
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           lfs: false
 
@@ -47,74 +31,81 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-falixnodes-${{ runner.os }}-py311-v1
+          restore-keys: |
+            pip-falixnodes-${{ runner.os }}-
+
       - name: Cache Playwright browsers
-        uses: actions/cache@v3
-        id: playwright-cache
+        uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-firefox-${{ hashFiles('requirements_playwright.txt') }}
+          key: playwright-chromium-${{ runner.os }}-v1
           restore-keys: |
-            playwright-${{ runner.os }}-firefox-
+            playwright-chromium-${{ runner.os }}-
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          
-          # 安装依赖
-          if [ -f requirements_playwright.txt ]; then
-            pip install -r requirements_playwright.txt --default-timeout=300 --retries 3
-          else
-            pip install playwright camoufox[geoip] browserforge --default-timeout=300 --retries 3
-          fi
+          pip install \
+            "playwright>=1.40.0" \
+            "requests>=2.28.0"
 
       - name: Install Playwright browsers
-        run: |
-          # 安装 Firefox（Camoufox 基于 Firefox）
-          playwright install firefox --with-deps
+        run: playwright install chromium --with-deps
 
-      - name: Run Falixnodes Auto Start Script
+      - name: 启用 WARP 网络
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual
+          mode: client
+
+      - name: 修复 DNS
+        run: |
+          echo "[INFO] 停用 systemd-resolved，设置公共 DNS..."
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo systemctl disable systemd-resolved 2>/dev/null || true
+
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
+
+          sleep 2
+
+          echo "[INFO] DNS 测试:"
+          nslookup falixnodes.net 1.1.1.1 || echo "[WARN] 解析失败"
+
+          echo ""
+          echo "[INFO] 当前出口 IP:"
+          curl -s --max-time 10 https://api.ipify.org && echo
+          echo "[INFO] WARP Trace:"
+          curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E 'ip=|warp=|loc=' || true
+
+      - name: Verify dependencies
+        run: |
+          python -c "
+          import importlib.metadata
+          print('playwright:', importlib.metadata.version('playwright'))
+          "
+
+      - name: Run start script
         env:
-          FALIXNODES_SERVER_URLS: ${{ secrets.FALIXNODES_SERVER_URLS }}
+          CI: true
+          FALIXNODES_URL: ${{ inputs.server_url || secrets.FALIXNODES_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TZ: Asia/Shanghai
-        run: |
-          echo "🚀 开始执行 Falixnodes 自动启动脚本..."
-          python -u falixnodes_auto_start.py
+          ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
+        run: python falixnodes_auto_start.py
 
-      - name: Upload error artifacts
-        if: failure()
+      - name: Upload screenshot
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: error-screenshots-${{ github.run_number }}
+          name: screenshot-${{ github.run_number }}
           path: "*.png"
           retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Send Telegram Notification
-        if: always()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S %Z')
-            
-            if [ "${{ job.status }}" == "success" ]; then
-              MESSAGE="✅ Falixnodes 服务器启动成功%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}"
-            else
-              MESSAGE="❌ Falixnodes 服务器启动失败%0A%0A🕐 执行时间: ${TIMESTAMP}%0A📊 运行编号: #${{ github.run_number }}%0A🔗 工作流: ${{ github.workflow }}%0A%0A请检查 GitHub Actions 日志"
-            fi
-            
-            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-              -d "chat_id=${TELEGRAM_CHAT_ID}" \
-              -d "text=${MESSAGE}" \
-              -d "parse_mode=HTML"
-            
-            echo "✅ Telegram 通知已发送"
-          else
-            echo "⚠️ 未配置 Telegram，跳过通知"
-          fi
 
       - name: 清理工作流记录
         if: always()
@@ -125,4 +116,3 @@ jobs:
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
           keep_minimum_runs: 3
-
