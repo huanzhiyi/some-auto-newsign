@@ -56,27 +56,10 @@ jobs:
           which google-chrome || which chromium-browser || true
           google-chrome --version || chromium-browser --version || true
 
-      - name: Install chromedriver
+- name: Install chromedriver
         run: |
           seleniumbase install chromedriver
           echo "[INFO] chromedriver installed"
-
-      - name: 启用 WARP 网络 (香港节点)
-        uses: fscarmen/warp-on-actions@v1.3
-        with:
-          stack: dual
-          mode: client
-          ip: hk
-
-      - name: 修复 DNS
-        run: |
-          sudo systemctl stop systemd-resolved 2>/dev/null || true
-          sudo systemctl disable systemd-resolved 2>/dev/null || true
-          sudo rm -f /etc/resolv.conf
-          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
-          sleep 2
-          echo "[INFO] 当前出口 IP:"
-          curl -s --max-time 10 https://api.ipify.org && echo
 
       - name: Run renew script
         env:
@@ -86,7 +69,7 @@ jobs:
           NATFREE_PASSWORD: ${{ secrets.NATFREE_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
+          HY2_URL: ${{ secrets.HY2_URL }}
         run: python natfree_auto_renew.py
 
       - name: Upload screenshots
