@@ -75,7 +75,6 @@ jobs:
           nohup ./hysteria2 client -c hysteria2.yaml > hysteria2.log 2>&1 &
           sleep 3
           curl -x http://127.0.0.1:7890 --max-time 5 https://api.ipify.org && echo " [OK] Proxy working" || echo " [WARN] Proxy may not work"
-        shell: bash
 
       - name: Run renew script
         env:
