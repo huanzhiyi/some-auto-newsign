@@ -56,7 +56,7 @@ jobs:
           which google-chrome || which chromium-browser || true
           google-chrome --version || chromium-browser --version || true
 
-- name: Install chromedriver
+      - name: Install chromedriver
         run: |
           seleniumbase install chromedriver
           echo "[INFO] chromedriver installed"
