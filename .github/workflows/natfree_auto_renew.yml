@@ -42,18 +42,12 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install \
-            "seleniumbase>=4.0.0" \
-            "ddddocr>=1.4.0" \
-            "requests>=2.28.0" \
-            "Pillow>=10.0.0"
+          pip install "seleniumbase>=4.0.0" "ddddocr>=1.4.0" "requests>=2.28.0" "Pillow>=10.0.0"
 
       - name: Install Chrome browser
         run: |
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable || sudo apt-get install -y chromium-browser
-          echo "[INFO] Installed Chrome:"
-          which google-chrome || which chromium-browser || true
           google-chrome --version || chromium-browser --version || true
 
       - name: Install chromedriver
@@ -73,10 +67,8 @@ jobs:
         run: |
           nohup ./hysteria2 client --http :7890 "${{ secrets.HY2_URL }}" > hysteria2.log 2>&1 &
           sleep 6
-          echo "=== Hysteria2 log ==="
           cat hysteria2.log || true
-          echo "=== Test proxy ==="
-          curl -x http://127.0.0.1:7890 --max-time 10 https://api.ipify.org && echo " [OK]" || echo "[WARN] Proxy may not work"
+          curl -x http://127.0.0.1:7890 --max-time 10 https://api.ipify.org && echo "[OK]" || echo "[WARN] Proxy not working"
 
       - name: Run renew script
         env:
@@ -86,7 +78,7 @@ jobs:
           NATFREE_PASSWORD: ${{ secrets.NATFREE_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PROXY_SERVER: ${{ secrets.HY2_URL != '' && 'http://127.0.0.1:7890' || '' }}
+          PROXY_SERVER: ${{ secrets.HY2_URL && 'http://127.0.0.1:7890' || '' }}
         run: python natfree_auto_renew.py
 
       - name: Upload screenshots
@@ -97,7 +89,7 @@ jobs:
           path: "*.png"
           retention-days: 7
 
-      - name: 清理工作流记录
+      - name: Cleanup workflow runs
         if: always()
         uses: Mattraks/delete-workflow-runs@v2
         with:
