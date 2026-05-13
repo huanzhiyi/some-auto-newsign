@@ -2,7 +2,7 @@ name: FreeCloud Auto Renew
 
 on:
   schedule:
-    - cron: '0 */12 * * *'
+    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       login_url:
@@ -60,6 +60,22 @@ jobs:
         run: |
           seleniumbase install chromedriver
           echo "[INFO] chromedriver installed"
+
+      - name: Install Hysteria2 client
+        if: secrets.HY2_URL != ''
+        run: |
+          wget -q https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -O hysteria2
+          chmod +x hysteria2
+          echo "[INFO] Hysteria2 installed"
+
+      - name: Start Hysteria2 proxy
+        if: secrets.HY2_URL != ''
+        run: |
+          echo "${{ secrets.HY2_URL }}" > hysteria2.yaml
+          nohup ./hysteria2 client -c hysteria2.yaml > hysteria2.log 2>&1 &
+          sleep 3
+          curl -x http://127.0.0.1:7890 --max-time 5 https://api.ipify.org && echo " [OK] Proxy working" || echo " [WARN] Proxy may not work"
+        shell: bash
 
       - name: Run renew script
         env:
