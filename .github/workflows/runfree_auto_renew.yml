@@ -1,0 +1,118 @@
+name: RunFreeCloud Auto Renew
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      login_url:
+        description: 'Login URL (override secret)'
+        required: false
+        type: string
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-natfree-${{ runner.os }}-py311-v1
+          restore-keys: |
+            pip-natfree-${{ runner.os }}-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "seleniumbase>=4.0.0" "ddddocr>=1.4.0" "requests>=2.28.0" "Pillow>=10.0.0"
+
+      - name: Install Chrome browser & Chinese fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable || sudo apt-get install -y chromium-browser
+          sudo apt-get install -y fonts-noto-cjk
+          google-chrome --version || chromium-browser --version || true
+
+      - name: Install chromedriver
+        run: |
+          seleniumbase install chromedriver
+          echo "[INFO] chromedriver installed"
+
+      - name: 配置代理
+        env:
+          HY2_URL: ${{ secrets.HY2_URL }}
+        run: |
+          if [ -z "$HY2_URL" ]; then
+            echo "INFO: 无代理配置，使用直连模式"
+            exit 0
+          fi
+          
+          echo "INFO: 配置 Hysteria2 代理"
+          wget -q https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -O hysteria2
+          chmod +x hysteria2
+          
+          URL="${HY2_URL#hysteria2://}"
+          PASSWORD="${URL%%@*}"
+          SERVER="${URL#*@}"; SERVER="${SERVER%%\?*}"
+          SNI=$(echo "$URL" | grep -oP 'sni=\K[^&]+' || echo "${SERVER%%:*}")
+          
+          cat > hy2.yaml << EOF
+          server: ${SERVER}
+          auth: ${PASSWORD}
+          tls:
+            sni: ${SNI}
+            insecure: true
+          http:
+            listen: 127.0.0.1:1080
+          EOF
+          
+          ./hysteria2 client -c hy2.yaml > /dev/null 2>&1 &
+          sleep 3
+          echo "PROXY_SERVER=http://127.0.0.1:1080" >> $GITHUB_ENV
+          echo "INFO: 代理已启动"
+
+      - name: Run renew script
+        env:
+          CI: true
+          RUNFREE_LOGIN_URL: ${{ inputs.login_url || secrets.RUNFREE_LOGIN_URL }}
+          RUNFREE_EMAIL: ${{ secrets.RUNFREE_EMAIL }}
+          RUNFREE_PASSWORD: ${{ secrets.RUNFREE_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python runfree_auto_renew.py
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.run_number }}
+          path: "*.png"
+          retention-days: 7
+
+      - name: Cleanup workflow runs
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
