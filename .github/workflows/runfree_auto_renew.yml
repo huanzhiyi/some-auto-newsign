@@ -35,9 +35,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-natfree-${{ runner.os }}-py311-v1
+          key: pip-runfree-${{ runner.os }}-py311-v1
           restore-keys: |
-            pip-natfree-${{ runner.os }}-
+            pip-runfree-${{ runner.os }}-
 
       - name: Install Python dependencies
         run: |
