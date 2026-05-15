@@ -1,4 +1,4 @@
-name: FreeCloud Auto Renew
+name: NatFreeCloud Auto Renew
 
 on:
   schedule:
