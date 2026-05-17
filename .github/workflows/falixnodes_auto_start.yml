@@ -76,7 +76,7 @@ jobs:
         run: |
           python -c "
           import importlib.metadata
-          print('playwright:', importlib.metadata.version('playwright'))
+          print('seleniumbase:', importlib.metadata.version('seleniumbase'))
           "
 
       - name: Run start script
