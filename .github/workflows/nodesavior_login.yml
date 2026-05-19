@@ -2,7 +2,7 @@ name: NodesAvior Auto Login
 
 on:
   schedule:
-    - cron: '10 0 * * *'
+    - cron: '5 4 * * *'
   workflow_dispatch:
 
 permissions:
