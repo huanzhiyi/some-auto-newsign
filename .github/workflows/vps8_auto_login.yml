@@ -1,0 +1,109 @@
+name: VPS8 Auto Login
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      login_url:
+        description: 'Login URL (override secret)'
+        required: false
+        type: string
+
+jobs:
+  login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-vps8-${{ runner.os }}-py311-v1
+          restore-keys: |
+            pip-vps8-${{ runner.os }}-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "seleniumbase>=4.18.0" \
+            "requests>=2.28.0"
+
+      - name: Enable WARP network
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual
+          mode: client
+
+      - name: Fix DNS
+        run: |
+          echo "[INFO] Stop systemd-resolved, set public DNS..."
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo systemctl disable systemd-resolved 2>/dev/null || true
+
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
+
+          sleep 2
+
+          echo "[INFO] DNS test:"
+          nslookup vps8.zz.cd 1.1.1.1 || echo "[WARN] resolve failed"
+
+          echo ""
+          echo "[INFO] Current IP:"
+          curl -s --max-time 10 https://api.ipify.org && echo
+          echo "[INFO] WARP Trace:"
+          curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E 'ip=|warp=|loc=' || true
+
+      - name: Verify dependencies
+        run: |
+          python -c "
+          import importlib.metadata
+          print('seleniumbase:', importlib.metadata.version('seleniumbase'))
+          "
+
+      - name: Run login script
+        env:
+          CI: true
+          VPS8_URL: ${{ inputs.login_url || secrets.VPS8_URL || secrets.LOGIN_URL }}
+          VPS8_EMAIL: ${{ secrets.VPS8_EMAIL || secrets.EMAIL }}
+          VPS8_PASSWORD: ${{ secrets.VPS8_PASSWORD || secrets.PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
+        run: python vps8_login.py
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-${{ github.run_number }}
+          path: "*.png"
+          retention-days: 7
+
+      - name: Clean up workflow runs
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
