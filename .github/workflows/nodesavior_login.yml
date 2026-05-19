@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
   actions: write
 
 jobs:
@@ -14,31 +13,74 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    defaults:
-      run:
-        working-directory: Host2Play-main
-
     steps:
-      - name: 拉取仓库
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
 
-      - name: 安装Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 安装依赖
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-nodesavior-${{ runner.os }}-py311-v1
+          restore-keys: |
+            pip-nodesavior-${{ runner.os }}-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-nodesavior-${{ runner.os }}-v1
+          restore-keys: |
+            playwright-chromium-nodesavior-${{ runner.os }}-
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install playwright requests pyvirtualdisplay
+          pip install \
+            "playwright>=1.40.0" \
+            "requests>=2.28.0" \
+            "pyvirtualdisplay>=3.0"
 
-      - name: 安装 Playwright 浏览器
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: 启用 WARP 网络
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual
+          mode: client
+
+      - name: 修复 DNS
         run: |
-          playwright install chromium --with-deps
+          echo "[INFO] 停用 systemd-resolved，设置公共 DNS..."
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo systemctl disable systemd-resolved 2>/dev/null || true
+
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
+
+          sleep 2
+
+          echo "[INFO] DNS 测试:"
+          nslookup nodesavior.com 1.1.1.1 || echo "[WARN] 解析失败"
+
+          echo ""
+          echo "[INFO] 当前出口 IP:"
+          curl -s --max-time 10 https://api.ipify.org && echo
+          echo "[INFO] WARP Trace:"
+          curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E 'ip=|warp=|loc=' || true
 
       - name: 安装并启动代理
         id: proxy
-        working-directory: Host2Play-main
         env:
           PROXY_NODE: ${{ secrets.PROXY_NODE }}
         run: |
@@ -153,13 +195,13 @@ jobs:
 
           with open("xray_config.json", "w") as f:
               json.dump(config, f, indent=2)
-          print("[INFO] ✅ 代理配置已生成")
+          print("[INFO] proxy config generated")
           PYEOF
 
           if [ -f "use_external_socks.txt" ]; then
             echo "proxy_server=$(cat use_external_socks.txt)" >> $GITHUB_OUTPUT
             echo "use_proxy=true" >> $GITHUB_OUTPUT
-            echo "[INFO] ✅ 使用外部 SOCKS5 代理"
+            echo "[INFO] using external SOCKS5 proxy"
             exit 0
           fi
 
@@ -170,18 +212,24 @@ jobs:
             if curl -x socks5://127.0.0.1:1080 -s --max-time 15 https://api.ipify.org > /dev/null 2>&1; then
               echo "proxy_server=socks5://127.0.0.1:1080" >> $GITHUB_OUTPUT
               echo "use_proxy=true" >> $GITHUB_OUTPUT
-              echo "[INFO] ✅ 代理连接成功"
+              echo "[INFO] proxy connected"
               exit 0
             fi
             sleep 3
           done
 
-          echo "[ERROR] ❌ 代理连接失败，回退直连"
+          echo "[ERROR] proxy failed, fallback to direct"
           echo "use_proxy=false" >> $GITHUB_OUTPUT
           echo "proxy_server=" >> $GITHUB_OUTPUT
 
+      - name: Verify dependencies
+        run: |
+          python -c "
+          import importlib.metadata
+          print('playwright:', importlib.metadata.version('playwright'))
+          "
+
       - name: 运行登录脚本
-        working-directory: Host2Play-main
         env:
           HEADLESS: "true"
           NODESAVIOR_COOKIES: ${{ secrets.NODESAVIOR_COOKIES }}
@@ -197,10 +245,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-${{ github.run_number }}
-          path: Host2Play-main/artifacts/
+          path: artifacts/
           retention-days: 7
 
-      - name: 清理历史
+      - name: 清理工作流记录
         if: always()
         uses: Mattraks/delete-workflow-runs@v2
         with:
@@ -208,4 +256,4 @@ jobs:
           repository: ${{ github.repository }}
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
-          keep_minimum_runs: 2
+          keep_minimum_runs: 3
