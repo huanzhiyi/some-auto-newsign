@@ -1,8 +1,8 @@
 name: Host2Play Auto Renew (VisionAI)
 
 on:
-  schedule:
-    - cron: '0 */7 * * *'
+  #schedule:
+    #- cron: '0 */7 * * *'
   workflow_dispatch:
     inputs:
       renew_url:
