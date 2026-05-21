@@ -2,7 +2,7 @@ name: PanFree Auto Renew
 
 on:
   schedule:
-    - cron: '0 5 * * *'
+    - cron: '0 5 21-28 * *'
   workflow_dispatch:
     inputs:
       login_url:
