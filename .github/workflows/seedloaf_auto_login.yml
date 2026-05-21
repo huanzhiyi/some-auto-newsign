@@ -1,8 +1,8 @@
 name: SeedLoaf Auto Login
 
 on:
-  schedule:
-    - cron: '0 */4 * * *'
+  #schedule:
+    #- cron: '0 */4 * * *'
   workflow_dispatch:
     inputs:
       login_url:
