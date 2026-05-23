@@ -1,140 +1,583 @@
-name: VPS8 Auto Login
+"""
+VPS8 (vps8.zz.cd) 登录签到脚本
+GitHub Actions 版，带 WARP 和 Telegram 通知
+"""
+import os
+import sys
+import time
+import subprocess
+import platform
+import requests
+from datetime import datetime
 
-on:
-  schedule:
-    - cron: '0 2 * * *'
-  workflow_dispatch:
-    inputs:
-      login_url:
-        description: 'Login URL (override secret)'
-        required: false
-        type: string
+from seleniumbase import SB
 
-jobs:
-  login:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
 
-    permissions:
-      actions: write
+LOGIN_URL = os.environ.get("VPS8_URL")
+EMAIL = os.environ.get("VPS8_EMAIL")
+PASSWORD = os.environ.get("VPS8_PASSWORD")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          repository: huanzhiyi/some-atuo-renew
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          lfs: false
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+PROXY_SERVER = os.environ.get("PROXY_SERVER", "").strip()
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+MAX_RETRIES = 5
 
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-vps8-${{ runner.os }}-py311-v1
-          restore-keys: |
-            pip-vps8-${{ runner.os }}-
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install \
-            "seleniumbase>=4.18.0" \
-            "requests>=2.28.0" \
-            "hcaptcha-challenger>=0.19.0" \
-            "playwright>=1.30.0"
-          python -m playwright install chromium
+def log(msg: str):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-      - name: Install fonts for Chinese rendering
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y fonts-noto-cjk fonts-wqy-zenhei
-          fc-cache -f
 
-      - name: 配置代理
-        env:
-          HY2_URL: ${{ secrets.HY2_URL }}
-        run: |
-          if [ -z "$HY2_URL" ]; then
-            echo "INFO: 无代理配置，使用直连模式"
-            exit 0
-          fi
+def send_telegram(msg: str) -> bool:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=30)
+        return True
+    except Exception as e:
+        log(f"Telegram error: {e}")
+        return False
 
-          echo "INFO: 配置 Hysteria2 代理"
-          wget -q https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -O hysteria2
-          chmod +x hysteria2
 
-          URL="${HY2_URL#hysteria2://}"
-          PASSWORD="${URL%%@*}"
-          SERVER="${URL#*@}"; SERVER="${SERVER%%\?*}"
-          SNI=$(echo "$URL" | grep -oP 'sni=\K[^&]+' || echo "${SERVER%%:*}")
+def _mask_sensitive(sb):
+    """截图前隐藏邮箱/密码等敏感信息"""
+    try:
+        sb.execute_script("""
+            // 隐藏输入框
+            document.querySelectorAll('input[type="email"], input[name="email"], input[type="password"], input[name="password"], #email, #password')
+                .forEach(function(el) { el.value = '******'; el.style.color = 'transparent'; el.style.textShadow = '0 0 6px #888'; });
+            // 隐藏页面上显示的邮箱/用户名文本
+            document.querySelectorAll('[class*="email"], [class*="user"], [class*="username"], [id*="email"], [id*="user"], .user-info, .user-name, .profile-name')
+                .forEach(function(el) { if (!el.querySelector('input')) el.textContent = '***@***.com'; });
+        """)
+    except:
+        pass
 
-          cat > hy2.yaml << EOF
-          server: ${SERVER}
-          auth: ${PASSWORD}
-          tls:
-            sni: ${SNI}
-            insecure: true
-          http:
-            listen: 127.0.0.1:1080
-          EOF
 
-          ./hysteria2 client -c hy2.yaml > /dev/null 2>&1 &
-          sleep 3
-          echo "PROXY_SERVER=http://127.0.0.1:1080" >> $GITHUB_ENV
-          echo "INFO: 代理已启动"
+# ── hCaptcha 解题（基于 hcaptcha-challenger）────────────────
+# 需要: pip install hcaptcha-challenger playwright
+#       GEMINI_API_KEY（免费，https://aistudio.google.com/app/apikey）
+# 未配置时跳过，不影响主流程。
 
-      - name: Fix DNS
-        run: |
-          echo "[INFO] Stop systemd-resolved, set public DNS..."
-          sudo systemctl stop systemd-resolved 2>/dev/null || true
-          sudo systemctl disable systemd-resolved 2>/dev/null || true
 
-          sudo rm -f /etc/resolv.conf
-          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
+def detect_hcaptcha_sitekey(sb):
+    """检测页面上 hCaptcha widget 的 sitekey"""
+    return sb.execute_script("""
+        var iframe = document.querySelector('iframe[src*="hcaptcha"][data-hcaptcha-widget-id]');
+        if (iframe) {
+            var match = iframe.src.match(/[?&#]sitekey=([A-Za-z0-9_-]+)/);
+            if (match) return match[1];
+        }
+        var el = document.querySelector('.h-captcha');
+        if (el) return el.getAttribute('data-sitekey') || null;
+        var hasSitekey = document.querySelector('[data-sitekey]');
+        if (hasSitekey) return hasSitekey.getAttribute('data-sitekey');
+        for (var f of document.querySelectorAll('iframe')) {
+            var m = f.src.match(/[?&#]sitekey=([A-Za-z0-9_-]+)/);
+            if (m) return m[1];
+        }
+        return null;
+    """)
 
-          sleep 2
 
-          echo "[INFO] DNS test:"
-          nslookup vps8.zz.cd 1.1.1.1 || echo "[WARN] resolve failed"
+def inject_hcaptcha_token(sb, token):
+    """将 hCaptcha token 注入页面"""
+    try:
+        sb.execute_script("""
+            var token = arguments[0];
+            var ta = document.querySelector('textarea[name="h-captcha-response"]');
+            if (ta) {
+                ta.style.display = 'block';
+                ta.value = token;
+                ta.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            var cf = document.querySelector('textarea[name="cf-turnstile-response"]');
+            if (cf) {
+                cf.style.display = 'block';
+                cf.value = token;
+                cf.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (typeof hcaptcha !== 'undefined' && hcaptcha.setResponse) {
+                hcaptcha.setResponse(token);
+            }
+        """, token)
+        log(f"[HCAPTCHA] Token 已注入 ({token[:40]}...)")
+        return True
+    except Exception as e:
+        log(f"[HCAPTCHA] 注入失败: {e}")
+        return False
 
-      - name: Verify dependencies
-        run: |
-          python -c "
-          import importlib.metadata
-          print('seleniumbase:', importlib.metadata.version('seleniumbase'))
-          "
 
-      - name: Run login script
-        env:
-          CI: true
-          VPS8_URL: ${{ inputs.login_url || secrets.VPS8_URL || secrets.LOGIN_URL }}
-          VPS8_EMAIL: ${{ secrets.VPS8_EMAIL || secrets.EMAIL }}
-          VPS8_PASSWORD: ${{ secrets.VPS8_PASSWORD || secrets.PASSWORD }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3-flash-preview
-        run: python vps8_login.py
+def try_solve_hcaptcha(sb, timeout=30):
+    """用 hcaptcha-challenger + Playwright 解决 hCaptcha（共享 Selenium 会话）
 
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshot-${{ github.run_number }}
-          path: "*.png"
-          retention-days: 7
+    从 Selenium 导出 cookies 注入 Playwright，让 Playwright
+    复现同一页面的 hCaptcha 挑战，得到 token 后注入回 Selenium。
+    """
+    if not GEMINI_API_KEY:
+        return False
 
-      - name: Clean up workflow runs
-        if: always()
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          delete_workflow_pattern: ${{ github.workflow }}
-          retain_days: 0
-          keep_minimum_runs: 3
+    log("[HCAPTCHA] 检测 hCaptcha 挑战...")
+    deadline = time.time() + timeout
+    sitekey = None
+    while time.time() < deadline:
+        sitekey = detect_hcaptcha_sitekey(sb)
+        if sitekey:
+            break
+        time.sleep(1)
+    if not sitekey:
+        log("[HCAPTCHA] 未检测到 sitekey")
+        return False
+
+    log(f"[HCAPTCHA] sitekey={sitekey[:20]}")
+    page_url = sb.get_current_url()
+    user_agent = sb.execute_script("return navigator.userAgent;")
+
+    try:
+        import asyncio
+        import logging as _logging
+        from playwright.async_api import async_playwright
+        from hcaptcha_challenger import AgentV, AgentConfig, CoordinateGrid
+    except ImportError:
+        log("[HCAPTCHA] 缺少依赖: pip install hcaptcha-challenger playwright")
+        return False
+
+    # 抑制 hcaptcha-challenger 内部 INFO/DEBUG 日志
+    _logging.getLogger("hcaptcha_challenger").setLevel(_logging.WARNING)
+
+    MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+
+    agent_config = AgentConfig(
+        GEMINI_API_KEY=GEMINI_API_KEY,
+        IMAGE_CLASSIFIER_MODEL=MODEL,
+        SPATIAL_POINT_REASONER_MODEL=MODEL,
+        SPATIAL_PATH_REASONER_MODEL=MODEL,
+        CHALLENGE_CLASSIFIER_MODEL=MODEL,
+        RETRY_ON_FAILURE=False,
+        EXECUTION_TIMEOUT=60,
+        RESPONSE_TIMEOUT=25,
+        MAX_CRUMB_COUNT=3,
+        coordinate_grid=CoordinateGrid(
+            x_line_space_num=18,
+            y_line_space_num=18,
+            adaptive_contrast=True,
+        ),
+    )
+
+    selenium_cookies = [
+        {
+            "name": c["name"],
+            "value": c["value"],
+            "domain": c.get("domain", ""),
+            "path": c.get("path", "/"),
+            "httpOnly": c.get("httpOnly", False),
+            "secure": c.get("secure", False),
+            "sameSite": c.get("sameSite", "Lax") if c.get("sameSite") else "Lax",
+        }
+        for c in sb.driver.get_cookies()
+    ]
+    log(f"[HCAPTCHA] 已导出 {len(selenium_cookies)} 个 cookies")
+
+    async def _solve():
+        async with async_playwright() as p:
+            async with await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            ) as browser:
+                async with await browser.new_context(
+                    user_agent=user_agent,
+                    locale="en-US",
+                    viewport={"width": 1280, "height": 720},
+                ) as context:
+                    await context.add_cookies(selenium_cookies)
+                    page = await context.new_page()
+
+                    log("[HCAPTCHA] Playwright 开始加载页面...")
+                    await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+                    await page.wait_for_timeout(3000)
+                    log(f"[HCAPTCHA] Playwright 页面标题: {await page.title()}")
+
+                    agent = AgentV(page=page, agent_config=agent_config)
+
+                    log("[HCAPTCHA] 点击 checkbox...")
+                    await agent.robotic_arm.click_checkbox()
+                    await page.wait_for_timeout(2000)
+
+                    log("[HCAPTCHA] 等待挑战...")
+                    signal = await agent.wait_for_challenge()
+
+                    if agent.cr_list and agent.cr_list[-1].is_pass:
+                        token = agent.cr_list[-1].generated_pass_UUID
+                        log(f"[HCAPTCHA] 挑战成功 token={token[:40]}...")
+                        return token
+
+                    log(f"[HCAPTCHA] 挑战失败 signal={signal}")
+                    if agent.cr_list:
+                        last = agent.cr_list[-1]
+                        log(f"[HCAPTCHA] 最后状态: is_pass={last.is_pass}, "
+                            f"challenge_type={last.challenge_type}")
+                    return None
+
+    try:
+        token = asyncio.run(_solve())
+        if token:
+            log(f"[HCAPTCHA] 解题成功 ({token[:40]}...)")
+
+            # 注入 token 到 Selenium 页面
+            sb.execute_script("""
+                var token = arguments[0];
+                var ta = document.querySelector('textarea[name="h-captcha-response"]');
+                if (ta) {
+                    ta.style.display = 'block';
+                    ta.value = token;
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                if (typeof hcaptcha !== 'undefined' && hcaptcha.setResponse) {
+                    hcaptcha.setResponse(token);
+                }
+            """, token)
+
+            time.sleep(1)
+            return True
+    except Exception as e:
+        log(f"[HCAPTCHA] 异常: {e}")
+    return False
+
+
+def run_flow(sb):
+    log("[1] 访问登录页面...")
+    sb.uc_open_with_reconnect(LOGIN_URL, reconnect_time=15)
+    time.sleep(10)
+
+    log("[2] 检测并解决 hCaptcha 验证...")
+    hcaptcha_ok = try_solve_hcaptcha(sb, timeout=30)
+    if not hcaptcha_ok:
+        log("[2] hCaptcha 未解决，返回重试")
+        return False
+    time.sleep(2)
+
+    if not EMAIL or not PASSWORD:
+        log("[FAIL] 未设置 EMAIL 或 PASSWORD")
+        return False
+
+    log("[3] 填写登录信息...")
+    email_selectors = [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[placeholder*="email" i]',
+        '#email',
+        'input[type="text"]',
+    ]
+    for sel in email_selectors:
+        try:
+            if sb.is_element_visible(sel):
+                sb.type(sel, EMAIL)
+                log(f"[3] 邮箱已填写: {sel}")
+                break
+        except:
+            continue
+
+    time.sleep(0.5)
+
+    password_selectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+        '#password',
+    ]
+    for sel in password_selectors:
+        try:
+            if sb.is_element_visible(sel):
+                sb.type(sel, PASSWORD)
+                log(f"[3] 密码已填写: {sel}")
+                break
+        except:
+            continue
+
+    time.sleep(0.5)
+
+    log("[4] 点击登录按钮...")
+    login_selectors = [
+        'button:has-text("登录")',
+        'button:has-text("Login")',
+        'button:has-text("Sign In")',
+        'button[type="submit"]',
+    ]
+    for sel in login_selectors:
+        try:
+            if sb.is_element_visible(sel):
+                sb.click(sel)
+                log(f"[4] 已点击: {sel}")
+                break
+        except:
+            continue
+
+    time.sleep(8)
+
+    current_url = sb.get_current_url()
+    log(f"[5] 当前 URL: {current_url}")
+
+    if "/login" in current_url:
+        log("[FAIL] 登录失败，仍在登录页面")
+        try:
+            error = sb.execute_script("""
+                var el = document.querySelector('.error, .alert, .message, [class*="error"]');
+                return el ? el.textContent : '';
+            """)
+            if error:
+                log(f"[ERROR] {error}")
+        except:
+            pass
+        return False
+
+    log("[SUCCESS] 登录成功!")
+    _mask_sensitive(sb)
+    sb.save_screenshot("after_login.png")
+
+    log("[6] 查找 points/signin 链接...")
+    time.sleep(3)
+
+    points_clicked = sb.execute_script("""
+        (function() {
+            var links = document.querySelectorAll('a[href*="points/signin"]');
+            if (links.length > 0) {
+                links[0].click();
+                return true;
+            }
+            return false;
+        })();
+    """)
+
+    if not points_clicked:
+        points_selectors = [
+            'a[href*="points/signin"]',
+            'a[href*="points"]',
+            '[href*="signin"]',
+        ]
+        for sel in points_selectors:
+            try:
+                if sb.is_element_visible(sel):
+                    sb.click(sel)
+                    log(f"[6] 已点击: {sel}")
+                    points_clicked = True
+                    break
+            except:
+                continue
+
+    if points_clicked:
+        log("[6] 已点击 points/signin 链接")
+    else:
+        log("[6] 未找到 points/signin 链接，尝试全局查找...")
+        sb.execute_script("""
+            var links = document.querySelectorAll('a');
+            for (var i = 0; i < links.length; i++) {
+                var href = links[i].getAttribute('href') || '';
+                if (href.includes('points') || href.includes('signin')) {
+                    links[i].click();
+                    return;
+                }
+            }
+        """)
+
+    time.sleep(5)
+
+    log("[7] 签到页面验证...")
+    try_solve_hcaptcha(sb, timeout=20)
+    time.sleep(3)
+
+    points_signin_url = sb.get_current_url()
+    log(f"[7] 签到页面 URL: {points_signin_url}")
+    _mask_sensitive(sb)
+    sb.save_screenshot("points_page.png")
+
+    log("[8] 点击立即签到按钮...")
+    result = sb.execute_script("""
+        (function() {
+            var all = document.querySelectorAll('button, input[type="submit"], a, span, div');
+            for (var i = 0; i < all.length; i++) {
+                var text = (all[i].textContent || all[i].value || '').trim();
+                if (text === '\u4eca\u5929\u5df2\u7b7e\u5230' || text.includes('\u4eca\u5929\u5df2\u7b7e') || text.includes('Already signed')) {
+                    return 'already_signed';
+                }
+                if (text === '\u7acb\u65f6\u7b7e\u5230' || text.includes('\u7acb\u65f6\u7b7e')) {
+                    all[i].click();
+                    return 'clicked';
+                }
+            }
+            for (var i = 0; i < all.length; i++) {
+                var text = (all[i].textContent || all[i].value || '').trim();
+                if (text === '\u7b7e\u5230') {
+                    all[i].click();
+                    return 'signed';
+                }
+            }
+            var forms = document.querySelectorAll('form');
+            for (var i = 0; i < forms.length; i++) {
+                var btn = forms[i].querySelector('button[type="submit"], input[type="submit"]');
+                if (btn) {
+                    btn.click();
+                    return 'form_submit_clicked';
+                }
+                forms[i].submit();
+                return 'form_submitted';
+            }
+            return null;
+        })();
+    """)
+
+    if result == 'already_signed':
+        log("[8] \u4eca\u5929\u5df2\u7b7e\u5230\uFF0C\u65E0\u9700\u518D\u6B21\u7B7E\u5230")
+    elif result:
+        log(f"[8] \u7b7e\u5230\u6309\u94AE\u5df2\u70B9\u51FB: {result}")
+    else:
+        log("[8] \u672A\u627E\u5230\u7B7E\u5230\u6309\u94AE")
+
+    time.sleep(5)
+
+    body_text = sb.execute_script("return document.body.textContent.trim();")
+    if body_text:
+        log(f"[8] 页面返回: {body_text[:500]}")
+
+    log("[9] 返回 points/signin 页面...")
+    sb.open(points_signin_url)
+    time.sleep(5)
+    log(f"[9] 当前 URL: {sb.get_current_url()}")
+
+    log("[10] 点击退出登录...")
+    logout_clicked = sb.execute_script("""
+        (function() {
+            var links = document.querySelectorAll('a, button');
+            for (var i = 0; i < links.length; i++) {
+                var text = links[i].textContent.trim();
+                if (text.includes('\u9000\u51fa\u767b\u5f55') || text.includes('Logout') || text.includes('Sign out') || text.includes('logout')) {
+                    links[i].click();
+                    return true;
+                }
+            }
+            var logoutLinks = document.querySelectorAll('a[href*="logout"], a[href*="signout"]');
+            if (logoutLinks.length > 0) {
+                logoutLinks[0].click();
+                return true;
+            }
+            return false;
+        })();
+    """)
+
+    if not logout_clicked:
+        logout_selectors = [
+            'a:has-text("\u9000\u51fa\u767b\u5f55")',
+            'button:has-text("\u9000\u51fa\u767b\u5f55")',
+            'a:has-text("Logout")',
+            'a:has-text("logout")',
+            'a[href*="logout"]',
+        ]
+        for sel in logout_selectors:
+            try:
+                if sb.is_element_visible(sel):
+                    sb.click(sel)
+                    log(f"[10] 已点击退出登录: {sel}")
+                    logout_clicked = True
+                    break
+            except:
+                continue
+
+    if logout_clicked:
+        log("[10] 已点击退出登录")
+    else:
+        log("[10] 未找到退出登录链接")
+
+    time.sleep(3)
+    _mask_sensitive(sb)
+    sb.save_screenshot("final.png")
+    log("[11] 流程完成!")
+    return True
+
+
+def main():
+    log("=" * 50)
+    log("VPS8 Login & Check-in (GitHub Actions)")
+    log(f"URL: {LOGIN_URL}")
+    log(f"PROXY: {PROXY_SERVER if PROXY_SERVER else 'None (直连)'}")
+    log("=" * 50)
+
+    # 安装中文字体（GitHub Actions 环境）
+    if platform.system().lower() == "linux":
+        try:
+            subprocess.run(
+                ["sudo", "apt-get", "install", "-y", "fonts-noto-cjk", "fonts-wqy-zenhei"],
+                capture_output=True, timeout=30,
+            )
+            log("[FONT] 中文字体已安装")
+        except Exception as e:
+            log(f"[FONT] 安装跳过: {e}")
+
+    if not PROXY_SERVER:
+        try:
+            ip = requests.get("https://api.ipify.org", timeout=10).text
+            log(f"[IP] 当前出口: {ip}")
+        except Exception as e:
+            log(f"[IP] 获取失败: {e}")
+
+    for retry in range(MAX_RETRIES):
+        log(f"[尝试 {retry + 1}/{MAX_RETRIES}]")
+
+        if retry > 0:
+            backoff = min(30, 5 * (2 ** (retry - 1)))
+            log(f"[等待] 退避 {backoff}s...")
+
+            # 清理残留 Xvfb 和 Playwright 进程
+            try:
+                subprocess.run(["pkill", "-f", "Xvfb"], capture_output=True, timeout=5)
+                subprocess.run(["pkill", "-f", "playwright"], capture_output=True, timeout=5)
+                time.sleep(2)
+            except:
+                pass
+
+            time.sleep(backoff)
+
+        try:
+            sb_kwargs = {
+                "uc": True,
+                "test": True,
+                "headed": False,
+                "chromium_arg": "--no-sandbox,--disable-dev-shm-usage,--disable-gpu,--window-size=1280,753",
+            }
+            if PROXY_SERVER:
+                sb_kwargs["proxy"] = PROXY_SERVER
+
+            with SB(**sb_kwargs) as sb:
+                if run_flow(sb):
+                    log("[SUCCESS] VPS8 签到流程完成!")
+                    send_telegram("\u2705 VPS8 \u767b\u5f55\u7b7e\u5230\u5b8c\u6210")
+                    return 0
+
+                time.sleep(3)
+                continue
+
+        except Exception as e:
+            log(f"[ERROR] {e}")
+            import traceback
+            traceback.print_exc()
+            time.sleep(3)
+            continue
+
+    log("[\u6700\u7ec8] \u5931\u8d25")
+    send_telegram("\u274c VPS8 \u767b\u5f55\u7b7e\u5230\u5931\u8d25")
+    return 1
+
+
+if __name__ == "__main__":
+    try:
+        code = main()
+        log(f"\n{'SUCCESS' if code == 0 else 'FAILED'}")
+        sys.exit(code)
+    except Exception as e:
+        log(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
