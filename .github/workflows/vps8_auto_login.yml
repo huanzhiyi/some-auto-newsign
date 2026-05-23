@@ -46,8 +46,7 @@ jobs:
             "seleniumbase>=4.18.0" \
             "requests>=2.28.0" \
             "hcaptcha-challenger>=0.19.0" \
-            "playwright>=1.30.0" \
-            "httpx>=0.27.0"
+            "playwright>=1.30.0"
           python -m playwright install chromium
 
       - name: Install fonts for Chinese rendering
@@ -120,8 +119,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.5-flash
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENROUTER_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
         run: python vps8_login.py
 
       - name: Upload screenshots
