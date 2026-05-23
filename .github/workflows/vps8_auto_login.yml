@@ -45,7 +45,8 @@ jobs:
           pip install --no-cache-dir \
             "requests>=2.28.0" \
             "hcaptcha-challenger>=0.19.0" \
-            "playwright>=1.30.0"
+            "playwright>=1.30.0" \
+            "pyyaml>=6.0"
           python -m playwright install chromium
 
       - name: Install fonts for Chinese rendering
