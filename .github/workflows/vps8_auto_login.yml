@@ -55,6 +55,17 @@ jobs:
           sudo apt-get install -y fonts-noto-cjk fonts-wqy-zenhei
           fc-cache -f
 
+      - name: Fix DNS
+        run: |
+          echo "[INFO] Stop systemd-resolved, set public DNS..."
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo systemctl disable systemd-resolved 2>/dev/null || true
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
+          sleep 2
+          echo "[INFO] DNS test:"
+          nslookup vps8.zz.cd 1.1.1.1 || echo "[WARN] resolve failed"
+
       - name: 配置代理
         env:
           HY2_URL: ${{ secrets.HY2_URL }}
@@ -87,20 +98,6 @@ jobs:
           sleep 3
           echo "PROXY_SERVER=http://127.0.0.1:1080" >> $GITHUB_ENV
           echo "INFO: 代理已启动"
-
-      - name: Fix DNS
-        run: |
-          echo "[INFO] Stop systemd-resolved, set public DNS..."
-          sudo systemctl stop systemd-resolved 2>/dev/null || true
-          sudo systemctl disable systemd-resolved 2>/dev/null || true
-
-          sudo rm -f /etc/resolv.conf
-          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
-
-          sleep 2
-
-          echo "[INFO] DNS test:"
-          nslookup vps8.zz.cd 1.1.1.1 || echo "[WARN] resolve failed"
 
       - name: Verify dependencies
         run: |
