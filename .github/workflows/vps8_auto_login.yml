@@ -119,8 +119,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NVIDIA_MODEL: ${{ secrets.NVIDIA_MODEL || 'meta/llama-3.2-11b-vision-instruct,meta/llama-3.2-90b-vision-instruct' }}
         run: python vps8_login.py
 
       - name: Clean up workflow runs
