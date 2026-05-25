@@ -214,14 +214,6 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
           xvfb-run -a python3 hnhost_login.py
 
-      - name: 上传截图
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-${{ github.run_number }}
-          path: artifacts/
-          retention-days: 7
-
       - name: 清理工作流记录
         if: always()
         uses: Mattraks/delete-workflow-runs@v2
