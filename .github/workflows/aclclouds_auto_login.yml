@@ -218,14 +218,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python aclclouds_auto_login.py
 
-      - name: Upload screenshot
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshot-${{ github.run_number }}
-          path: result.png
-          retention-days: 7
-
       - name: 清理工作流记录
         if: always()
         uses: Mattraks/delete-workflow-runs@v2
