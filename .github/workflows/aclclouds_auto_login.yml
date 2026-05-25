@@ -1,8 +1,8 @@
 name: ACLClouds Auto Login
 
 on:
-  #schedule:
-    #- cron: '0 */5 * * *'
+  schedule:
+    - cron: '0 */12 * * *'
   workflow_dispatch:
     inputs:
       login_url:
@@ -57,31 +57,148 @@ jobs:
       - name: Install Playwright browsers
         run: playwright install chromium --with-deps
 
-      - name: 启用 WARP 网络
-        uses: fscarmen/warp-on-actions@v1.3
-        with:
-          stack: dual
-          mode: client
-
-      - name: 修复 DNS
+      - name: 安装并启动代理
+        id: proxy
+        env:
+          PROXY_NODE: ${{ secrets.PROXY_NODE }}
         run: |
-          echo "[INFO] 停用 systemd-resolved，设置公共 DNS..."
-          sudo systemctl stop systemd-resolved 2>/dev/null || true
-          sudo systemctl disable systemd-resolved 2>/dev/null || true
+          if [ -z "$PROXY_NODE" ]; then
+            echo "use_proxy=false" >> $GITHUB_OUTPUT
+            echo "proxy_server=" >> $GITHUB_OUTPUT
+            echo "[INFO] 未配置代理，直连模式"
+            exit 0
+          fi
 
-          sudo rm -f /etc/resolv.conf
-          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
+          wget -q https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -q Xray-linux-64.zip -d xray && chmod +x xray/xray
 
-          sleep 2
+          python3 << 'PYEOF'
+          import os, sys, json, base64
+          from urllib.parse import parse_qs, unquote, urlparse
 
-          echo "[INFO] DNS 测试:"
-          nslookup dash.aclclouds.com 1.1.1.1 || echo "[WARN] 解析失败"
+          def mask(s):
+              return f"{s[:2]}***{s[-2:]}" if len(s) > 4 else "****"
 
-          echo ""
-          echo "[INFO] 当前出口 IP:"
-          curl -s --max-time 10 https://api.ipify.org && echo
-          echo "[INFO] WARP Trace:"
-          curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E 'ip=|warp=|loc=' || true
+          url = os.environ.get("PROXY_NODE", "").strip()
+          if not url:
+              print("[ERROR] PROXY_NODE 为空")
+              sys.exit(1)
+
+          if url.startswith("vless://"):
+              protocol = "vless"
+              content = url[8:]
+          elif url.startswith("vmess://"):
+              protocol = "vmess"
+              content = url[8:]
+          elif url.startswith("trojan://"):
+              protocol = "trojan"
+              content = url[9:]
+          elif url.startswith("ss://"):
+              protocol = "ss"
+              content = url[5:]
+          elif url.startswith("socks5://") or url.startswith("socks://"):
+              protocol = "socks5"
+              with open("use_external_socks.txt", "w") as f:
+                  f.write(url.split("#")[0])
+              print("[INFO] SOCKS5 -> external")
+              sys.exit(0)
+          else:
+              print(f"[ERROR] 不支持的协议: {url.split('://')[0]}")
+              sys.exit(1)
+
+          if "#" in content:
+              content = content.rsplit("#", 1)[0]
+
+          config = {
+              "log": {"loglevel": "warning"},
+              "inbounds": [
+                  {"port": 1080, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": True}},
+                  {"port": 1081, "listen": "127.0.0.1", "protocol": "http"}
+              ],
+              "outbounds": []
+          }
+
+          if protocol == "vless":
+              uuid, rest = content.split("@", 1)
+              host_port = rest.split("?", 1)[0] if "?" in rest else rest
+              params_str = rest.split("?", 1)[1] if "?" in rest else ""
+              address, port = host_port.rsplit(":", 1) if ":" in host_port else (host_port, "443")
+              params = parse_qs(params_str)
+              outbound = {"protocol": "vless", "settings": {"vnext": [{"address": address, "port": int(port), "users": [{"id": uuid, "encryption": "none"}]}]}, "streamSettings": {"network": params.get("type", ["tcp"])[0], "security": params.get("security", ["none"])[0]}}
+              security = params.get("security", ["none"])[0]
+              if security in ("reality", "tls"):
+                  sni = params.get("sni", [address])[0]
+                  fp = params.get("fp", ["chrome"])[0]
+                  if security == "reality":
+                      outbound["streamSettings"]["realitySettings"] = {"serverName": sni, "fingerprint": fp, "publicKey": params.get("pbk", [""])[0]}
+                  else:
+                      outbound["streamSettings"]["tlsSettings"] = {"serverName": sni, "fingerprint": fp, "allowInsecure": False}
+              if params.get("type", ["tcp"])[0] == "ws":
+                  outbound["streamSettings"]["wsSettings"] = {"path": params.get("path", ["/"])[0], "headers": {"Host": params.get("host", [address])[0]}}
+              config["outbounds"].append(outbound)
+
+          elif protocol == "vmess":
+              padding = 4 - len(content) % 4
+              if padding != 4: content += "=" * padding
+              vm = json.loads(base64.b64decode(content).decode("utf-8"))
+              outbound = {"protocol": "vmess", "settings": {"vnext": [{"address": vm["add"], "port": int(vm["port"]), "users": [{"id": vm["id"], "alterId": int(vm.get("aid", 0)), "security": "auto"}]}]}, "streamSettings": {"network": vm.get("net", "tcp"), "security": "tls" if vm.get("tls") == "tls" else "none"}}
+              if vm.get("tls") == "tls":
+                  outbound["streamSettings"]["tlsSettings"] = {"serverName": vm.get("sni", "") or vm.get("host", vm["add"]), "fingerprint": vm.get("fp", "chrome"), "allowInsecure": False}
+              if vm.get("net", "tcp") == "ws":
+                  outbound["streamSettings"]["wsSettings"] = {"path": vm.get("path", "/"), "headers": {"Host": vm.get("host", vm["add"])}}
+              config["outbounds"].append(outbound)
+
+          elif protocol == "trojan":
+              password, rest = content.split("@", 1)
+              host_port = rest.split("?", 1)[0] if "?" in rest else rest
+              params_str = rest.split("?", 1)[1] if "?" in rest else ""
+              address, port = host_port.rsplit(":", 1) if ":" in host_port else (host_port, "443")
+              params = parse_qs(params_str)
+              outbound = {"protocol": "trojan", "settings": {"servers": [{"address": address, "port": int(port), "password": password}]}, "streamSettings": {"network": params.get("type", ["tcp"])[0], "security": "tls", "tlsSettings": {"serverName": params.get("sni", [address])[0], "fingerprint": params.get("fp", ["chrome"])[0], "allowInsecure": False}}}
+              if params.get("type", ["tcp"])[0] == "ws":
+                  outbound["streamSettings"]["wsSettings"] = {"path": params.get("path", ["/"])[0], "headers": {"Host": params.get("host", [address])[0]}}
+              config["outbounds"].append(outbound)
+
+          elif protocol == "ss":
+              if "@" in content:
+                  encoded, server_part = content.split("@", 1)
+                  decoded = base64.b64decode(encoded + "==").decode("utf-8")
+                  method, password = decoded.split(":", 1)
+                  address, port = server_part.split(":", 1)
+              else:
+                  decoded = base64.b64decode(content + "==").decode("utf-8")
+                  method, password = decoded.split(":", 1) if ":" in decoded and "@" not in decoded else (decoded.split("@")[0].split(":")[0], decoded.split("@")[0].split(":")[1])
+                  address, port = decoded.split("@")[1].split(":") if "@" in decoded else ("", "443")
+              config["outbounds"].append({"protocol": "shadowsocks", "settings": {"servers": [{"address": address, "port": int(port), "method": method, "password": password}]}})
+
+          with open("xray_config.json", "w") as f:
+              json.dump(config, f, indent=2)
+          print("[INFO] proxy config generated")
+          PYEOF
+
+          if [ -f "use_external_socks.txt" ]; then
+            echo "proxy_server=$(cat use_external_socks.txt)" >> $GITHUB_OUTPUT
+            echo "use_proxy=true" >> $GITHUB_OUTPUT
+            echo "[INFO] using external SOCKS5 proxy"
+            exit 0
+          fi
+
+          ./xray/xray run -c xray_config.json > xray.log 2>&1 &
+          sleep 5
+
+          for i in 1 2 3 4 5; do
+            if curl -x socks5://127.0.0.1:1080 -s --max-time 15 https://api.ipify.org > /dev/null 2>&1; then
+              echo "proxy_server=socks5://127.0.0.1:1080" >> $GITHUB_OUTPUT
+              echo "use_proxy=true" >> $GITHUB_OUTPUT
+              echo "[INFO] proxy connected"
+              exit 0
+            fi
+            sleep 3
+          done
+
+          echo "[ERROR] proxy failed, fallback to direct"
+          echo "use_proxy=false" >> $GITHUB_OUTPUT
+          echo "proxy_server=" >> $GITHUB_OUTPUT
 
       - name: Verify dependencies
         run: |
@@ -96,9 +213,9 @@ jobs:
           ACLCLOUDS_LOGIN_URL: ${{ inputs.login_url || secrets.ACLCLOUDS_LOGIN_URL }}
           ACLCLOUDS_USERNAME: ${{ secrets.ACLCLOUDS_USERNAME }}
           ACLCLOUDS_PASSWORD: ${{ secrets.ACLCLOUDS_PASSWORD }}
+          PROXY_NODE: ${{ steps.proxy.outputs.proxy_server }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
         run: python aclclouds_auto_login.py
 
       - name: Upload screenshot
