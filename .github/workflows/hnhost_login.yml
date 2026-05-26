@@ -207,6 +207,7 @@ jobs:
         env:
           HEADLESS: "true"
           HNHOST_DISCORD_TOKEN: ${{ secrets.HNHOST_DISCORD_TOKEN }}
+          PROXY: ${{ steps.proxy.outputs.proxy_server }}
           PROXY_NODE: ${{ steps.proxy.outputs.proxy_server }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
