@@ -1,4 +1,4 @@
-name: Host2Play Auto Renew (VisionAI)
+name: Host2Play Auto Renew (Audio + VisionAI)
 
 on:
   #schedule:
@@ -35,9 +35,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-visionai-${{ runner.os }}-py311-v1
+          key: pip-audio-visionai-${{ runner.os }}-py311-v1
           restore-keys: |
-            pip-visionai-${{ runner.os }}-
+            pip-audio-visionai-${{ runner.os }}-
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4
@@ -46,6 +46,19 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-v1
           restore-keys: |
             playwright-chromium-${{ runner.os }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg \
+            chromium-browser \
+            chromium
+          echo "[INFO] Installed Chromium:"
+          which chromium-browser || which chromium || true
+          chromium-browser --version || chromium --version || true
+          echo "[INFO] ffmpeg:"
+          ffmpeg -version | head -1
 
       - name: Install Python dependencies
         run: |
@@ -63,15 +76,9 @@ jobs:
             "vision-ai-recaptcha-solver>=1.0.0" \
             "tenacity>=8.0.0" \
             "aiohttp>=3.9.0" \
-            "click>=8.1.0"
-
-      - name: Install Chromium browser
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
-          echo "[INFO] Installed Chromium:"
-          which chromium-browser || which chromium || true
-          chromium-browser --version || chromium --version || true
+            "click>=8.1.0" \
+            "seleniumbase>=4.32.0" \
+            "SpeechRecognition>=3.10.0"
 
       - name: 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
@@ -105,6 +112,9 @@ jobs:
           from ultralytics import YOLO
           import importlib.metadata
           print('ultralytics OK')
+          import speech_recognition as sr
+          print('speech_recognition OK')
+          print('seleniumbase:', importlib.metadata.version('seleniumbase'))
           print('playwright:', importlib.metadata.version('playwright'))
           "
 
@@ -123,6 +133,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
           BROWSER_PATH: ${{ steps.chromium.outputs.path }}
+          HEADLESS: 'true'
         run: python host2play_auto_renew_visionai.py
 
       - name: Upload log artifact
