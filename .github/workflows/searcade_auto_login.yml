@@ -2,7 +2,7 @@ name: Searcade Auto Login
 
 on:
   schedule:
-    - cron: '0 */8 * * *'
+    - cron: '0 4 */7 * *'
   workflow_dispatch:
     inputs:
       login_url:
