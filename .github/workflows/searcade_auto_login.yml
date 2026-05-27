@@ -55,7 +55,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install \
             "seleniumbase>=4.33.0" \
-            "requests>=2.28.0"
+            "requests>=2.28.0" \
+            "pyvirtualdisplay>=3.0"
 
       - name: 安装并启动代理
         id: proxy
@@ -260,8 +261,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-            python searcade_auto_login.py
+          python searcade_auto_login.py
 
       - name: Upload screenshots
         if: always()
