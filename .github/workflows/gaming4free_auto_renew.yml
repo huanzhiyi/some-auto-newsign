@@ -88,7 +88,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: screenshot-${{ github.run_number }}
-          path: "*.png"
+          path: cf_after_click.png
           retention-days: 7
 
       - name: 清理工作流记录
